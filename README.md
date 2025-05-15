@@ -96,12 +96,66 @@ CUDA版本: 12.8
 - **下载地址**: [T5-base](https://huggingface.co/google-t5/t5-base/tree/main)
 - **保存位置**: `models\t5-base\`
 
+### 4. 模型结构
+
+.\LTX-Video-Trainer-GUI\models
+├─LTX-Video-0.9.7-diffusers
+│  │  .gitattributes
+│  │  model_index.json
+│  │
+│  ├─scheduler
+│  │      scheduler_config.json
+│  │
+│  ├─text_encoder
+│  │      config.json
+│  │      model-00001-of-00004.safetensors
+│  │      model-00002-of-00004.safetensors
+│  │      model-00003-of-00004.safetensors
+│  │      model-00004-of-00004.safetensors
+│  │      model.safetensors.index.json
+│  │
+│  ├─tokenizer
+│  │      added_tokens.json
+│  │      special_tokens_map.json
+│  │      spiece.model
+│  │      tokenizer_config.json
+│  │
+│  ├─transformer
+│  │      config.json
+│  │      diffusion_pytorch_model-00001-of-00006.safetensors
+│  │      diffusion_pytorch_model-00002-of-00006.safetensors
+│  │      diffusion_pytorch_model-00003-of-00006.safetensors
+│  │      diffusion_pytorch_model-00004-of-00006.safetensors
+│  │      diffusion_pytorch_model-00005-of-00006.safetensors
+│  │      diffusion_pytorch_model-00006-of-00006.safetensors
+│  │      diffusion_pytorch_model.safetensors.index.json
+│  │
+│  └─vae
+│          config.json
+│          diffusion_pytorch_model.safetensors
+│
+└─t5-base
+        .gitattributes.txt
+        config.json
+        flax_model.msgpack
+        generation_config.json
+        model.safetensors
+        pytorch_model.bin
+        README.md
+        rust_model.ot
+        spiece.model
+        tf_model.h5
+        tokenizer.json
+        tokenizer_config.json
+
+
+
 ## 准备训练数据
 
 1. 在 `train_date` 目录中创建以你的触发词命名的文件夹（例如 `APT`）
 2. 将训练视频放入该文件夹中
 3. 文件名应避免使用特殊符号
-4. 默认触发词是 `APT`，建议保持此名称以免出错
+4. 默认触发词是 `APT`，可以修改不要搞中文或者奇怪符号
 
 ## 使用训练器
 
