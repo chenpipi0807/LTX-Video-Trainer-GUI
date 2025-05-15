@@ -1,0 +1,30 @@
+# LTX-Video-Trainer 环境要求
+
+## PyTorch环境
+- Python版本: 3.12 (Anaconda3)
+- PyTorch版本: 2.8.0.dev20250511+cu128 或更新的夜间版本
+- Torchvision版本: 0.22.0.dev20250512+cu128 或兼容版本
+- CUDA版本: 12.8
+- 推荐GPU: NVIDIA GeForce RTX 系列
+
+## 安装命令
+```bash
+# 安装支持CUDA 12.8的PyTorch
+C:\ProgramData\anaconda3\python.exe -m pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
+
+# 安装最新版本的diffusers
+C:\ProgramData\anaconda3\python.exe -m pip install git+https://github.com/huggingface/diffusers.git
+```
+
+## 模型文件
+1. LTX-Video模型:
+   - 下载地址: https://huggingface.co/a-r-r-o-w/LTX-Video-0.9.7-diffusers/tree/main
+   - 保存位置: models\LTX-Video-0.9.7-diffusers
+
+2. 标题生成模型(LLaVA-NeXT-Video-7B):
+   - 下载地址: https://huggingface.co/llava-hf/LLaVA-NeXT-Video-7B-hf/tree/main
+   - 自动保存位置: C:\Users\<用户名>\.cache\huggingface\hub\models--llava-hf--LLaVA-NeXT-Video-7B-hf\snapshots\<哈希值>
+
+## 离线使用注意事项
+- 确保所有模型文件完整下载到对应位置
+- 训练素材放在train_data目录，文件名要与触发词一致，避免特殊符号

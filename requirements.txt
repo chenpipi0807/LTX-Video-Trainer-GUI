@@ -1,0 +1,70 @@
+# LTX-Video-Trainer 依赖清单
+# 作者：pipchen
+# 日期：2025-05-13
+
+#################################################
+# 核心环境要求
+#################################################
+# Python 3.12 (Anaconda3 环境)
+
+#################################################
+# PyTorch与CUDA依赖 (必须使用nightly构建版本)
+#################################################
+--find-links https://download.pytorch.org/whl/nightly/cu128/torch_nightly.html
+torch>=2.8.0.dev  # 必须是支持CUDA 12.8的夜间构建版本
+torchvision>=0.22.0.dev  # 配套版本
+torchaudio>=2.8.0.dev  # 配套版本
+
+# 推荐安装命令:
+# python -m pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
+
+#################################################
+# Diffusers库 (必须使用最新版本)
+#################################################
+git+https://github.com/huggingface/diffusers.git  # 必须使用最新的git版本，官方发布版不支持某些VAE功能
+
+#################################################
+# 优化器和量化依赖
+#################################################
+bitsandbytes>=0.41.0  # 用于8位优化器和量化
+transformers>=4.38.0  # Hugging Face Transformers库
+accelerate>=0.30.0  # 分布式训练和混合精度支持
+safetensors>=0.4.1  # 安全模型权重存储
+
+#################################################
+# UI相关依赖
+#################################################
+gradio>=4.19.0  # UI界面
+pyyaml>=6.0.1  # YAML配置文件处理
+rich>=13.7.0  # 终端富文本显示
+typer>=0.9.0  # 命令行参数处理
+
+#################################################
+# 数据处理依赖
+#################################################
+numpy>=1.26.0  # 数组处理
+pillow>=10.2.0  # 图像处理
+opencv-python>=4.9.0.80  # 视频处理
+einops>=0.7.0  # 张量操作
+moviepy>=1.0.3  # 视频编辑
+
+#################################################
+# 必要的预训练模型 (需要手动下载)
+#################################################
+# 1. LTX-Video-0.9.7-diffusers:
+#    地址: https://huggingface.co/a-r-r-o-w/LTX-Video-0.9.7-diffusers
+#    保存位置: ./models/LTX-Video-0.9.7-diffusers/
+
+# 2. LLaVA-NeXT-Video-7B-hf (用于打标):
+#    地址: https://huggingface.co/llava-hf/LLaVA-NeXT-Video-7B-hf
+#    保存位置: ~/.cache/huggingface/hub/models--llava-hf--LLaVA-NeXT-Video-7B-hf/snapshots/{hash}/
+
+# 3. T5-base:
+#    地址: https://huggingface.co/google-t5/t5-base
+#    保存位置: ./models/t5-base/
+
+#################################################
+# 其它可选依赖
+#################################################
+xformers>=0.0.23  # 可选，用于加速注意力计算
+triton>=2.1.0  # 可选，用于更快的GPU计算
