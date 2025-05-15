@@ -1262,7 +1262,7 @@ def run_pipeline(basename, dims, frames, config_name, rank, split_scenes=True, c
                 current_status = status.value if hasattr(status, 'value') else ""
                 status.update(value=current_status + f"\n已找到预处理数据: {len(latents_files)} 个潜在文件, {len(conditions_files)} 个条件文件")
         else:
-            logger.warning(f"预处理目录存在但为空: latents_dir={latents_files}, conditions_dir={conditions_files}")
+            logger.warning(f"预处理目录存在但为空: 潜在文件={len(latents_files)}, 条件文件={len(conditions_files)}")
     else:
         logger.info(f"预处理目录不存在或不完整: latents_dir={os.path.exists(latents_dir)}, conditions_dir={os.path.exists(conditions_dir)}")
     
@@ -1273,12 +1273,63 @@ def run_pipeline(basename, dims, frames, config_name, rank, split_scenes=True, c
             current_status = status.value if hasattr(status, 'value') else ""
             status.update(value=current_status + "\n\n跳过预处理步骤，使用已存在的预处理数据")
     elif preprocess:  # 需要预处理且没有现有预处理数据
-        logger.info("检测到预处理数据不存在，开始执行预处理...")
-        
+        logger.info(f"检测到预处理数据不存在，开始执行预处理...")        
+        if hasattr(status, 'update'):
+            current_status = status.value if hasattr(status, 'value') else ""
+            status.update(value=current_status + "\n\n=== 步骤3: 开始数据预处理 ===")
+            
+        # 在预处理前自动修复视频与标题不匹配问题
+        try:
+            fix_mismatch_script = os.path.join(SCRIPTS_DIR, "auto_fix_video_caption_mismatch.py")
+            if os.path.exists(fix_mismatch_script):
+                logger.info(f"在预处理前检查并修复视频与标题不匹配问题...")
+                if hasattr(status, 'update'):
+                    current_status = status.value if hasattr(status, 'value') else ""
+                    status.update(value=current_status + "\n检查视频与标题是否匹配...")
+                
+                # 导入修复模块
+                sys.path.append(SCRIPTS_DIR)
+                try:
+                    from auto_fix_video_caption_mismatch import check_and_fix_video_caption_mismatch
+                    fixed, mapped_count, moved_count = check_and_fix_video_caption_mismatch(dataset_path)
+                    
+                    if fixed:
+                        logger.info(f"成功修复视频与标题不匹配问题: 有标题视频={mapped_count}个, 移动了{moved_count}个不匹配的视频文件")
+                        if hasattr(status, 'update'):
+                            current_status = status.value if hasattr(status, 'value') else ""
+                            status.update(value=current_status + f"\n已修复视频与标题不匹配问题，移动了{moved_count}个文件")
+                    else:
+                        logger.info(f"视频与标题匹配检查完成: 有标题视频={mapped_count}个")
+                except ImportError:
+                    # 如果导入失败，使用命令行方式执行
+                    fix_cmd = [sys.executable, fix_mismatch_script, dataset_path]
+                    logger.info(f"执行自动修复命令: {' '.join(fix_cmd)}")
+                    fix_output = run_command(fix_cmd, status)
+                    logger.info(f"自动修复输出: {fix_output}")
+            else:
+                logger.warning(f"自动修复脚本不存在: {fix_mismatch_script}")
+        except Exception as e:
+            logger.warning(f"执行自动修复脚本时出错: {str(e)}，将继续预处理流程")
+            
         # 确保预处理目录已创建
         if not os.path.exists(precomputed_path):
             os.makedirs(precomputed_path, exist_ok=True)
             logger.info(f"创建预处理目录: {precomputed_path}")
+            
+        # 检查caption目录内容
+        if os.path.exists(caption_dir):
+            caption_files = os.listdir(caption_dir)
+            logger.info(f"Caption目录内容: {caption_files}")
+            
+            # 检查caption.txt内容
+            if os.path.exists(caption_file):
+                try:
+                    with open(caption_file, 'r', encoding='utf-8') as f:
+                        caption_content = f.read()
+                    logger.info(f"标注文件内容:\n{caption_content}")
+                except Exception as e:
+                    logger.error(f"读取标注文件出错: {str(e)}")
+
             
         # 创建子目录以确保程序正确执行
         os.makedirs(os.path.join(precomputed_path, "latents"), exist_ok=True)
