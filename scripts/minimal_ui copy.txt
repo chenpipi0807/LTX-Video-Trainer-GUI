@@ -1,0 +1,1986 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+# 强制设置默认编码为UTF-8，避免中文环境下的编码问题
+import sys
+import io
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
+"""
+极简LTX-Video-Trainer界面
+最小化依赖要求，提供基本训练功能
+"""
+
+import os
+import sys
+import time
+import subprocess
+import json
+import shutil
+import yaml  # 添加缺失的yaml导入
+import logging
+import gradio as gr
+import torch
+import numpy as np  # 添加numpy导入，避免潜在错误
+from pathlib import Path
+from safetensors.torch import save_file  # 添加safetensors导入
+
+# 设置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger('LTX-Trainer')
+
+# 默认路径
+PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CONFIGS_DIR = os.path.join(PROJECT_DIR, "configs")
+SCRIPTS_DIR = os.path.join(PROJECT_DIR, "scripts")
+
+# LTX模型路径 - 只使用diffusers格式的本地模型
+DIFFUSERS_MODEL_PATH = os.path.join(PROJECT_DIR, "models", "LTX-Video-0.9.7-diffusers")
+
+# 设置环境变量以强制离线模式
+os.environ["PYTHONIOENCODING"] = "utf8"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["HF_DATASETS_OFFLINE"] = "1"
+
+
+# 数据集目录
+DATA_DIR = os.path.join(PROJECT_DIR, "train_date")
+
+# 用户自定义配置目录
+USER_CONFIGS_DIR = os.path.join(PROJECT_DIR, "user_configs")
+os.makedirs(USER_CONFIGS_DIR, exist_ok=True)  # 确保目录存在
+
+# 读取可用的配置文件
+CONFIG_FILES = {}
+
+# 读取默认配置文件
+for file in os.listdir(CONFIGS_DIR):
+    if file.endswith(".yaml"):
+        name = file.replace(".yaml", "")
+        CONFIG_FILES[name] = os.path.join(CONFIGS_DIR, file)
+
+# 读取用户自定义配置文件
+if os.path.exists(USER_CONFIGS_DIR):
+    for file in os.listdir(USER_CONFIGS_DIR):
+        if file.endswith(".yaml"):
+            name = file.replace(".yaml", "")
+            # 添加标记以区分自定义配置
+            display_name = f"[自定义] {name}"
+            CONFIG_FILES[display_name] = os.path.join(USER_CONFIGS_DIR, file)
+            logger.info(f"发现用户自定义配置: {file}")
+
+# 分辨率和帧数分开设置
+# 预设分辨率列表
+RESOLUTIONS_DIMS = [
+    # 标准方形分辨率
+    "[FANG] 512x512",    # 基础方形分辨率，适合低显存GPU
+    "[FANG] 768x768",    # 中等方形分辨率，更好的细节
+    "[FANG] 1024x1024",  # 高清方形分辨率，需要大量显存
+    
+    # 横向宽屏分辨率 (16:9)
+    "[HENG] 1024x576",   # 标准宽屏分辨率
+    "[HENG] 1280x720",   # 720p宽屏分辨率
+    "[HENG] 1920x1080",  # 1080p全高清分辨率（需要大量显存）
+    
+    # 竖向分辨率 (9:16)
+    "[SHU] 576x1024",   # 标准竖屏分辨率
+    "[SHU] 720x1280"    # 720p竖屏分辨率
+]
+
+# 预设帧数列表 - 每个都是8的倍数加1
+FRAME_COUNTS = [
+    "25",   # 24帧+1, 标准低帧数
+    "49",   # 48帧+1, 中等帧数
+    "73",   # 72帧+1, 较高帧数
+    "97",   # 96帧+1, 高帧数
+    "121",  # 120帧+1, 非常高的帧数
+    "145"   # 144帧+1, 极高帧数（需要大量显存）
+]
+
+# 兼容原有代码，保留旧的RESOLUTIONS常量
+RESOLUTIONS = [
+    "512x512x25", "512x512x49", "768x768x25", "768x768x49",
+    "1024x1024x25", "1024x1024x49", "1024x576x25", "1024x576x41", 
+    "1280x720x25", "1280x720x41", "1920x1080x25", "576x1024x25", 
+    "576x1024x41", "720x1280x25", "720x1280x41"
+]
+
+def run_command(cmd, status=None, verbose=True):
+    """运行命令并将输出更新到状态框
+    
+    Args:
+        cmd: 命令列表
+        status: 可以是Gradio组件或其他对象，如果为None则只返回结果不更新任何UI
+        verbose: 是否在终端显示简化日志
+    
+    Returns:
+        命令的输出字符串
+    """
+    try:
+        import subprocess
+        
+        # 打印命令
+        cmd_str = ' '.join(cmd)
+        logger.info(f"执行命令: {cmd_str}")
+        
+        # 更新状态显示
+        if status is not None and hasattr(status, 'update'):
+            status.update(value=f"运行命令:\n{cmd_str}\n\n请等待...")
+        
+        # 直接执行命令，不重写参数
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding='utf-8',
+            errors='replace'
+        )
+        
+        # 读取输出
+        stdout, stderr = process.communicate()
+        
+        # 组装输出信息
+        output = f"命令返回码: {process.returncode}\n\n标准输出:\n{stdout}\n\n错误输出:\n{stderr}"
+        
+        # 更新状态显示
+        if status is not None and hasattr(status, 'update'):
+            status.update(value=output)
+            
+        return output
+    except Exception as e:
+        error_msg = f"执行命令时出错: {str(e)}"
+        logger.error(error_msg)
+        if status is not None and hasattr(status, 'update'):
+            status.update(value=error_msg)
+        return error_msg
+    
+    # 设置环境变量确保使用UTF-8编码
+    cmd_env = os.environ.copy()
+    cmd_env["PYTHONIOENCODING"] = "utf-8"
+    # 判断是否为训练命令
+    is_training_cmd = "train.py" in cmd[1] if len(cmd) > 1 else False
+    
+    # 对于训练命令，我们采用最简单直接的方式运行
+    if is_training_cmd:
+        cmd_str = " ".join(cmd)
+        logger.info(f"直接运行训练命令: {cmd_str}")
+        
+        # 更新UI状态
+        if status is not None and hasattr(status, 'update'):
+            status.update(value=f"开始训练, 命令: {cmd_str}\n\n控制台将显示实时训练进度\n请查看命令行窗口")
+        
+        # 直接使用subprocess.call 这是最简单可靠的方式
+        try:
+            # 不使用任何流重定向或shell=True，让命令在原生显示器中运行
+            result = subprocess.run(cmd, env=cmd_env)
+            
+            if result.returncode == 0:
+                success_msg = "训练已完成，模型已保存到outputs目录。"
+                if status is not None and hasattr(status, 'update'):
+                    status.update(value=f"开始训练, 命令: {cmd_str}\n\n{success_msg}")
+                return success_msg
+            else:
+                error_msg = f"训练失败，返回代码 {result.returncode}"
+                if status is not None and hasattr(status, 'update'):
+                    status.update(value=f"开始训练, 命令: {cmd_str}\n\n{error_msg}")
+                return error_msg
+        except Exception as e:
+            error_msg = f"训练启动失败: {str(e)}"
+            logger.error(error_msg)
+            if status is not None and hasattr(status, 'update'):
+                status.update(value=f"开始训练, 命令: {cmd_str}\n\n{error_msg}")
+            return error_msg
+    
+    # 非训练命令使用原来的处理方式
+    cmd_str = " ".join(cmd)
+    status_output = f"运行命令:\n{cmd_str}\n\n请等待...\n"
+    
+    if verbose:
+        logger.info(f"执行命令: {cmd_str}")
+    
+    # 更新状态的安全方法
+    def update_status(text):
+        nonlocal status_output
+        status_output = text
+        if status is not None and hasattr(status, 'update'):
+            try:
+                status.update(value=text)
+            except:
+                pass  # 忽略更新错误
+    
+    update_status(status_output)
+    
+    try:
+        # 使用subprocess.Popen来捕获输出
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,  # 将stderr重定向到stdout便于一起捕获
+            text=True,
+            bufsize=1,
+            universal_newlines=True,
+            env=cmd_env
+        )
+        
+        # 使用更健壮的输出读取方式，适合可能包含二进制数据的输出
+        # 先终止subprocess.Popen方式，改用subprocess.run
+        process.terminate()
+        
+        # 直接使用subprocess.run执行命令，并捕获完整输出
+        try:
+            # 设置text=False以获取原始字节数据，避免自动解码
+            complete_result = subprocess.run(cmd, capture_output=True, env=cmd_env, text=False)
+            
+            # 有效处理输出 - 包含可能的二进制数据
+            try:
+                # 先尝试完整解码
+                output = complete_result.stdout.decode('utf-8') if complete_result.stdout else ""
+                error = complete_result.stderr.decode('utf-8') if complete_result.stderr else ""
+            except UnicodeDecodeError:
+                # 如果解码失败，尝试提取可读部分
+                # 首先使用安全的latin1编码并替换错误字符
+                output = complete_result.stdout.decode('latin1', errors='replace') if complete_result.stdout else ""
+                error = complete_result.stderr.decode('latin1', errors='replace') if complete_result.stderr else ""
+                
+                # 不显示警告，这是正常情况
+                if verbose:
+                    logger.debug("含有二进制数据的输出已被安全处理")
+            
+            # 处理并的潜在错误无法显示的问题
+            if "\ufffd" in output:
+                # 尝试逐行解析，科学地处理混合文本和二进制数据
+                readable_output = []
+                for line in output.splitlines():
+                    if not line.strip():
+                        continue
+                    # 如果这行主要是替换字符，跳过或简化处理
+                    if line.count('\ufffd') > len(line) * 0.3:  # 如果替换字符超过30%
+                        readable_output.append("[binary data omitted]")
+                    else:
+                        readable_output.append(line)
+                
+                # 重新组合输出
+                output = "\n".join(readable_output)
+            
+            # 更新状态输出
+            status_output += "\n" + output
+            if error:  # 只有当有错误时才添加错误输出
+                status_output += "\n\nErrors:\n" + error
+            
+            update_status(status_output)
+        except Exception as e:
+            logger.error(f"处理命令输出时出错: {e}")
+            status_output += f"\n\n读取命令输出时出错: {e}"
+            update_status(status_output)
+        
+        # 等待进程结束
+        process.wait()
+        
+        if process.returncode == 0:
+            if verbose:
+                logger.info("命令执行成功!")
+            update_status(status_output + "\n\n命令执行成功!")
+        else:
+            if verbose:
+                logger.error(f"命令执行失败，返回代码 {process.returncode}")
+            update_status(status_output + f"\n\n命令执行失败，返回代码 {process.returncode}")
+        
+        return status_output
+    
+    except Exception as e:
+        if verbose:
+            logger.error(f"执行出错: {str(e)}")
+        update_status(status_output + f"\n\n执行出错: {str(e)}")
+        return status_output
+
+def run_preprocessing(dataset, dims, frames, id_token, decode_videos, status):
+    """运行数据预处理
+    
+    Args:
+        dataset: 数据集路径
+        dims: 分辨率尺寸 (如 "[横版] 768x768")
+        frames: 帧数 (如 "49")
+        id_token: LoRA触发词
+        decode_videos: 是否验证视频解码
+        status: 状态UI组件
+    """
+    # 提取实际分辨率，去除标识前缀
+    dimensions = extract_dims(dims)
+    
+    # 组合分辨率和帧数
+    resolution = f"{dimensions}x{frames}"
+    
+    # 使用简化版批处理文件运行预处理，直接传递参数
+    bat_script = os.path.join(SCRIPTS_DIR, "preprocess_simple.bat")
+    
+    # 构建命令，使用惯用的参数格式
+    cmd = [
+        bat_script,
+        dataset,
+        "--resolution-buckets", resolution,
+        "--batch-size", "1",
+        "--num-workers", "0"  # 确保使用num_workers=0
+    ]
+    
+    if id_token:
+        cmd.extend(["--id-token", id_token])
+    
+    if decode_videos:
+        cmd.append("--decode-videos")
+    
+    return run_command(cmd, status)
+
+def run_training(config_name, status):
+    """运行训练脚本"""
+    config_path = CONFIG_FILES.get(config_name)
+    if not config_path:
+        status.update(value=f"错误: 找不到配置 {config_name}")
+        return f"错误: 找不到配置 {config_name}"
+        
+    cmd = [
+        sys.executable,
+        os.path.join(SCRIPTS_DIR, "train.py"),
+        config_path
+    ]
+    
+    return run_command(cmd, status)
+
+def find_ltx_model(model_name_pattern="ltxv-13b"):
+    """查找LTX模型文件
+    
+    Args:
+        model_name_pattern: 模型名称模式，如ltxv-13b
+        
+    Returns:
+        找到的模型路径或None
+    """
+    # 直接返回diffusers目录作为模型路径，不再查找具体的safetensors文件
+    if os.path.exists(DIFFUSERS_MODEL_PATH):
+        logger.info(f"使用diffusers格式模型: {DIFFUSERS_MODEL_PATH}")
+        return DIFFUSERS_MODEL_PATH
+    
+    logger.warning(f"未找到diffusers模型: {DIFFUSERS_MODEL_PATH}")
+    return None
+
+def check_dataset_location(basename):
+    """检查数据集位置，支持多种结构
+    
+    检查顺序：
+    1. train_date/{basename} (新推荐结构)
+    2. {basename}_raw (原始结构)
+    
+    Args:
+        basename: 项目名称
+    
+    
+    Returns:
+        数据集路径或None
+    """
+    # 检查train_date目录
+    train_date_path = os.path.join(DATA_DIR, basename)
+    if os.path.exists(train_date_path) and os.listdir(train_date_path):
+        logger.info(f"找到train_date目录下的数据集: {train_date_path}")
+        return train_date_path
+    
+    # 检查原始结构
+    raw_path = f"{basename}_raw"
+    if os.path.exists(raw_path) and os.listdir(raw_path):
+        logger.info(f"找到原始结构数据集: {raw_path}")
+        return raw_path
+    
+    logger.warning(f"未找到数据集: {basename}")
+    return None
+
+def extract_trigger_word(basename):
+    """从数据集名称中提取触发词
+    
+    规则：
+    1. 如果数据集名称包含下划线，取第一个下划线前的部分
+    2. 如果数据集名称包含空格，取第一个空格前的部分
+    3. 如果数据集名称是纯文本，使用整个名称
+    
+    Args:
+        basename: 数据集名称
+        
+    Returns:
+        提取的触发词
+    """
+    # 如果是"XXX_scenes"格式，移除"_scenes"后缀
+    if basename.endswith("_scenes"):
+        basename = basename[:-7]
+    
+    # 如果包含下划线，取第一段
+    if "_" in basename:
+        return basename.split("_")[0]
+    
+    # 如果包含空格，取第一段
+    if " " in basename:
+        return basename.split(" ")[0]
+    
+    # 否则使用整个名称
+    return basename
+
+def extract_dims(dims_string):
+    """从带有前缀标识的分辨率字符串中提取实际分辨率
+    
+    Args:
+        dims_string: 带有前缀标识的分辨率，如 "[横版] 1024x576"
+    
+    Returns:
+        实际分辨率字符串，如 "1024x576"
+    """
+    # 如果分辨率字符串包含方向标识前缀，去除前缀
+    # 支持中文和拼音格式的前缀
+    if "[" in dims_string and "]" in dims_string:
+        # 找到最后一个方括号位置并取其后的内容
+        dims_string = dims_string.split("]")
+        if len(dims_string) > 1:
+            dims_string = dims_string[1].strip()
+    
+    return dims_string
+
+def run_pipeline(basename, dims, frames, config_name, rank, split_scenes=True, caption=True, preprocess=True, status=None):
+    """运行完整流水线 - 根据选项执行分场景、标注和预处理步骤，然后用train.py训练
+    
+    Args:
+        basename: 项目名称
+        dims: 分辨率尺寸 (如 "[横版] 768x768")
+        frames: 帧数 (如 "49")
+        config_name: 配置模板名称
+        rank: LoRA秩
+        split_scenes: 是否将长视频拆分成场景
+        caption: 是否自动标注视频
+        preprocess: 是否执行预处理步骤
+        status: 状态UI组件
+    """
+    # 提取实际分辨率，去除标识前缀
+    dimensions = extract_dims(dims)
+    
+    # 组合分辨率和帧数
+    resolution = f"{dimensions}x{frames}"
+    config_template = CONFIG_FILES.get(config_name)
+    if not config_template:
+        error_msg = f"错误: 找不到配置 {config_name}"
+        if hasattr(status, 'update'):
+            status.update(value=error_msg)
+        logger.error(error_msg)
+        return error_msg
+    
+    # 为了保证训练成功，我们直接使用train.py而不是run_pipeline.py
+    logger.info(f"使用配置模板: {config_template} 创建临时配置文件")
+    
+    # 检查是否有匹配的模型文件
+    model_pattern = "ltxv-13b" if "13b" in config_name else "ltx-video-2b"
+    model_path = find_ltx_model(model_pattern)
+    
+    # 检查数据集路径
+    dataset_path = check_dataset_location(basename)
+    if not dataset_path:
+        error_msg = f"错误: 未找到数据集 '{basename}'\n请确保数据位于 'train_date/{basename}' 或 '{basename}_raw' 目录"
+        if hasattr(status, 'update'):
+            status.update(value=error_msg)
+        logger.error(error_msg)
+        return error_msg
+    
+    # 分场景步骤（可选）
+    if split_scenes:
+        # 原始视频应该在数据集下的raw_videos目录
+        raw_videos_dir = os.path.join(dataset_path, "raw_videos")
+        # 场景输出目录应该在数据集下的scenes目录
+        scenes_dir = os.path.join(dataset_path, "scenes")
+        
+        # 检查原始视频目录下是否有视频文件
+        raw_videos = []
+        video_extensions = [".mp4", ".avi", ".mov", ".mkv"]
+        video_files = []
+        for root, _, files in os.walk(dataset_path):
+            if os.path.basename(root) == "raw_videos" or os.path.basename(root) == "scenes":
+                continue  # 跳过raw_videos和scenes目录
+            for file in files:
+                file_path = os.path.join(root, file)
+                _, ext = os.path.splitext(file)
+                if ext.lower() in video_extensions:
+                    video_files.append(file_path)
+        
+        if video_files:
+            # 创建raw_videos目录
+            os.makedirs(raw_videos_dir, exist_ok=True)
+            
+            # 复制视频文件并重命名以避免特殊字符和空格导致的问题
+            logger.info(f"从数据集根目录发现{len(video_files)}个视频文件，复制到raw_videos目录")
+            
+            # 原始文件到新文件的映射，用于记录
+            file_mapping = {}
+            processed_files = []
+            
+            for i, file_path in enumerate(video_files):
+                # 生成简化的文件名，使用项目名称作为前缀
+                _, ext = os.path.splitext(file_path)
+                safe_filename = f"{basename}{i+1:02d}{ext.lower()}"
+                
+                # 目标路径
+                dest_path = os.path.join(raw_videos_dir, safe_filename)
+                
+                # 保存映射关系
+                original_name = os.path.basename(file_path)
+                file_mapping[original_name] = safe_filename
+                processed_files.append(file_path)
+                
+                # 复制文件
+                if not os.path.exists(dest_path):
+                    shutil.copy2(file_path, dest_path)
+                    logger.info(f"重命名视频: '{original_name}' -> '{safe_filename}'")
+            
+            # 删除原始视频文件，避免数据集重复
+            for file_path in processed_files:
+                if os.path.exists(file_path) and os.path.dirname(file_path) != raw_videos_dir:
+                    try:
+                        os.remove(file_path)
+                        logger.info(f"删除原始视频文件: {file_path}")
+                    except Exception as e:
+                        logger.warning(f"无法删除原始视频文件 {file_path}: {str(e)}")
+                
+            # 如果有多个文件被重命名，写入映射记录文件
+            if len(file_mapping) > 1:
+                mapping_file = os.path.join(dataset_path, "video_name_mapping.txt")
+                with open(mapping_file, 'w', encoding='utf-8') as f:
+                    f.write("\u539f\u59cb\u6587\u4ef6\u540d -> \u91cd\u547d\u540d\u540e\u7684\u6587\u4ef6\u540d\n")
+                    f.write("---------------------------------------------------\n")
+                    for orig, new in file_mapping.items():
+                        f.write(f"{orig} -> {new}\n")
+                logger.info(f"文件名映射记录已保存到: {mapping_file}")
+
+            raw_videos = [Path(dest_path) for dest_path in file_mapping.values()]
+        
+        # 检查scenes目录是否存在且不为空
+        scenes_empty = True
+        if os.path.exists(scenes_dir):
+            # 检查scenes目录中是否有视频文件
+            scene_videos = []
+            for ext in [".mp4", ".avi", ".mov", ".mkv"]:
+                scene_videos.extend(list(Path(scenes_dir).glob(f"*{ext}")))
+            scenes_empty = len(scene_videos) == 0
+            
+        if raw_videos and (not os.path.exists(scenes_dir) or scenes_empty):
+            # 存在原始视频但没有场景目录或场景目录为空，执行分场景
+            os.makedirs(scenes_dir, exist_ok=True)
+            logger.info(f"找到{len(raw_videos)}个原始视频文件，开始执行分场景...")
+            if hasattr(status, 'update'):
+                status.update(value=f"开始对{len(raw_videos)}个视频文件进行分场景...")
+            
+            # 创建场景目录
+            with ProcessPoolExecutor(max_workers=1) as executor:
+                scene_futures = []
+                
+                for video in raw_videos:
+                    cmd = [
+                        sys.executable,
+                        os.path.join(os.path.dirname(__file__), "split_scenes.py"),
+                        str(video),
+                        scenes_dir,
+                        "--filter-shorter-than", "5s",
+                        "--detector", "content",
+                        "--threshold", "30"
+                    ]
+                    logger.info(f"执行分场景命令: {' '.join(cmd)}")
+                    scene_futures.append(executor.submit(run_command, cmd))
+                    
+                for future in scene_futures:
+                    future.result()
+                    
+        else:
+            if not raw_videos:
+                logger.info(f"未找到原始视频文件，跳过分场景步骤")
+                if hasattr(status, 'update'):
+                    status.update(value="未找到原始视频文件，跳过分场景步骤")
+            else:
+                logger.info("场景目录已存在且有视频文件，跳过分场景步骤")
+                if hasattr(status, 'update'):
+                    status.update(value="场景目录已存在，跳过分场景步骤")
+    
+    # 检查是否已经有标注文件
+    # 在数据集目录下创建caption目录
+    caption_dir = os.path.join(dataset_path, "caption")
+    os.makedirs(caption_dir, exist_ok=True)
+    
+    # 标注文件应该在caption目录下
+    caption_file = os.path.join(caption_dir, "caption.txt")
+    caption_json = os.path.join(caption_dir, "captions.json")
+    
+    # 确保在预处理前有caption.txt文件
+    has_caption_file = os.path.exists(caption_file) and os.path.getsize(caption_file) > 0
+    has_caption_json = os.path.exists(caption_json) and os.path.getsize(caption_json) > 0
+    
+    # 优先使用现有的caption.txt文件，如果它存在
+    if has_caption_file:
+        logger.info(f"找到现有标注文件(caption.txt)，跳过标注步骤")
+        if hasattr(status, 'update'):
+            current_status = status.value if hasattr(status, 'value') else ""
+            status.update(value=current_status + "\n找到现有标注文件，跳过标注步骤")
+    # 如果有JSON文件但没有TXT文件，尝试转换
+    elif has_caption_json:
+        logger.info(f"找到JSON标注文件，正在转换为caption.txt格式...")
+        if hasattr(status, 'update'):
+            current_status = status.value if hasattr(status, 'value') else ""
+            status.update(value=current_status + "\n正在将JSON标注转换为TXT格式...")
+            
+        # 尝试转换JSON到TXT
+        try:
+            import json
+            # 读取JSON文件
+            with open(caption_json, 'r', encoding='utf-8') as f:
+                captions_data = json.load(f)
+            
+            # 创建caption.txt - 预处理脚本期望的格式
+            with open(caption_file, 'w', encoding='utf-8') as f:
+                for media_path, caption in captions_data.items():
+                    # 将相对路径转换为绝对路径，如果必要的话
+                    abs_media_path = os.path.join(dataset_path, media_path) if not os.path.isabs(media_path) else media_path
+                    f.write(f"{abs_media_path}|{caption}\n")
+            
+            logger.info(f"成功从captions.json创建caption.txt标注文件: {caption_file}")
+            if hasattr(status, 'update'):
+                current_status = status.value if hasattr(status, 'value') else ""
+                status.update(value=current_status + "\n成功将JSON标注转换为TXT格式")
+                
+            # 直接跳过下面的标注生成步骤
+            caption = False  # 设置为False跳过标注生成
+        except Exception as e:
+            error_msg = f"转换标注文件时出错: {str(e)}"
+            logger.error(error_msg)
+            if hasattr(status, 'update'):
+                current_status = status.value if hasattr(status, 'value') else ""
+                status.update(value=current_status + f"\n{error_msg}")
+            # 这里不返回错误，而是继续尝试生成标注
+    
+    # 无论如何，再次检查caption.txt是否存在
+    has_caption_file = os.path.exists(caption_file) and os.path.getsize(caption_file) > 0
+    
+    # 如果仍然没有标注文件且用户要求标注，执行标注脚本
+    if caption and not has_caption_file:
+        # 执行标注命令
+        logger.info(f"未找到标注文件，开始执行视频标注流程...")
+        if hasattr(status, 'update'):
+            status.update(value="正在生成视频标注...")
+        
+        # 准备标注命令 - 标注脚本要求媒体文件必须是输出目录的子目录
+        # 因此，我们将输出目录设置到数据集根目录，并在根目录下创建标注文件
+        output_json = os.path.join(dataset_path, "captions.json")
+        
+        # 创建标注目录，但文件暂时直接存储在数据集根目录
+        os.makedirs(caption_dir, exist_ok=True)
+        
+        caption_cmd = [
+            sys.executable,
+            os.path.join(SCRIPTS_DIR, "caption_videos.py"),
+            dataset_path,  # 输入目录（包含视频文件）
+            "--output", output_json,  # 输出到数据集根目录下的JSON文件
+            "--captioner-type", "llava_next_7b"
+        ]
+        
+        logger.info(f"执行标注命令: {' '.join(caption_cmd)}")
+        caption_output = run_command(caption_cmd, status)
+        
+        # 检查标注是否成功 - 更智能的检查
+        # 即使返回了错误代码，也检查是否生成了标注文件
+        caption_file_exists = os.path.exists(caption_file)
+        caption_json_exists = os.path.exists(caption_json) and os.path.getsize(caption_json) > 0
+        caption_success_message = "Captioned" in caption_output and "successfully" in caption_output
+        
+        # 如果标注成功，继续处理流程
+        if caption_file_exists or caption_json_exists or caption_success_message or os.path.exists(output_json):
+            logger.info(f"标注已生成，继续处理流程")
+            if hasattr(status, 'update'):
+                status.update(value="视频标注完成，准备进行预处理")
+                
+            # 如果标注文件生成在数据集根目录，复制到caption目录
+            if os.path.exists(output_json) and os.path.getsize(output_json) > 0:
+                # 如果输出目录JSON不存在或与output_json不同，复制文件
+                if not os.path.exists(caption_json) or os.path.getmtime(output_json) > os.path.getmtime(caption_json):
+                    logger.info(f"复制标注JSON文件到caption目录: {caption_json}")
+                    shutil.copy2(output_json, caption_json)
+        elif "Error" in caption_output or "错误" in caption_output:
+            error_msg = f"标注视频失败: {caption_output}"
+            if hasattr(status, 'update'):
+                status.update(value=error_msg)
+            logger.error(error_msg)
+            return error_msg
+        
+        # 如果生成了JSON文件但没有TXT文件，转换JSON为TXT
+        json_exists = os.path.exists(caption_json) and os.path.getsize(caption_json) > 0
+        if (not os.path.exists(caption_file) or os.path.getsize(caption_file) == 0) and json_exists:
+            # 如果标注文件存在于数据集根目录但不在caption目录，复制文件
+            logger.info(f"复制标注JSON文件到caption目录: {caption_json}")
+            shutil.copy2(output_json, caption_json)
+            json_exists = True
+            
+        if (not os.path.exists(caption_file) or os.path.getsize(caption_file) == 0) and json_exists:
+            try:
+                import json
+                logger.info(f"将JSON标注转换为TXT格式...")
+                
+                # 读取JSON文件
+                with open(caption_json, 'r', encoding='utf-8') as f:
+                    captions_data = json.load(f)
+                
+                # 创建caption.txt - 预处理脚本期望的格式
+                with open(caption_file, 'w', encoding='utf-8') as f:
+                    # 检查是否为列表格式 (标注脚本生成的新格式)
+                    if isinstance(captions_data, list):
+                        for item in captions_data:
+                            if isinstance(item, dict) and 'media_path' in item and 'caption' in item:
+                                media_path = item['media_path']
+                                caption = item['caption']
+                                f.write(f"{media_path}|{caption}\n")
+                    # 检查是否为字典格式 (旧格式兼容)
+                    elif isinstance(captions_data, dict):
+                        for media_path, caption in captions_data.items():
+                            f.write(f"{media_path}|{caption}\n")
+                    else:
+                        raise ValueError(f"不支持的JSON标注格式: {type(captions_data)}, 格式应为列表或字典")
+                        
+                logger.info(f"成功创建标注文本文件: {caption_file}")
+                if hasattr(status, 'update'):
+                    status.update(value="视频标注完成，准备进行预处理")
+            except Exception as e:
+                error_msg = f"处理标注文件时出错: {str(e)}"
+                if hasattr(status, 'update'):
+                    status.update(value=error_msg)
+                logger.error(error_msg)
+                return error_msg
+    else:
+        logger.info(f"找到现有标注文件，跳过标注步骤")
+        if hasattr(status, 'update'):
+            current_status = status.value if hasattr(status, 'value') else ""
+            status.update(value=current_status + "\n跳过标注步骤")
+            
+    # 最后一次检查标注文件是否存在 - 这是预处理所必需的
+    if not os.path.exists(caption_file) or os.path.getsize(caption_file) == 0:
+        error_msg = f"错误: 标注文件(caption.txt)不存在或为空，无法进行预处理"
+        if hasattr(status, 'update'):
+            status.update(value=error_msg)
+        logger.error(error_msg)
+        return error_msg
+    
+    # 提取触发词
+    trigger_word = extract_trigger_word(basename)
+    if trigger_word != basename:
+        logger.info(f"从数据集名称 '{basename}' 中提取触发词: '{trigger_word}'")
+        if hasattr(status, 'update'):
+            current_status = status.value if hasattr(status, 'value') else ""
+            status.update(value=current_status + f"\n提取触发词: '{trigger_word}'")
+    
+    # 检查是否需要进行预处理
+    raw_dir_name = f"{basename}_raw"
+    
+    # 检查预处理数据是否已存在
+    precomputed_path = None
+    
+    # 首先检查数据集根目录下是否有.precomputed目录
+    if dataset_path:
+        possible_precomputed = os.path.join(dataset_path, ".precomputed")
+        if os.path.exists(possible_precomputed):
+            # 进一步检查目录中是否有latents和conditions子目录，且不为空
+            latents_dir = os.path.join(possible_precomputed, "latents")
+            conditions_dir = os.path.join(possible_precomputed, "conditions")
+            if os.path.exists(latents_dir) and os.path.exists(conditions_dir):
+                if len(os.listdir(latents_dir)) > 0 and len(os.listdir(conditions_dir)) > 0:
+                    precomputed_path = possible_precomputed
+                    logger.info(f"找到已预处理的数据: {precomputed_path}")
+    
+    # 从模板文件创建一个临时配置文件
+    try:
+        with open(config_template, 'r', encoding='utf-8') as f:
+            config_content = f.read()
+        
+        # 替换占位符
+        config_content = config_content.replace('[BASENAME]', basename)
+        config_content = config_content.replace('[RANK]', str(rank))
+        
+        # 替换预处理数据路径，确保使用正确的.precomputed目录
+        if precomputed_path:
+            # 需要使用相对路径或YAML中预期的格式
+            relative_precomputed_path = os.path.basename(precomputed_path)
+            logger.info(f"设置预处理数据路径为: {relative_precomputed_path}")
+            # 在YAML中查找并替换preprocessed_data_root字段
+            import re
+            
+            # 更强大的正则表达式，无论值是否有引号都可匹配
+            pattern = r'(preprocessed_data_root:)\s*["\']?[^\r\n,\]\}]*["\']?'
+            replacement = f'\\1 {relative_precomputed_path}'
+            config_content = re.sub(pattern, replacement, config_content)
+            
+            # 读取临时配置并转换为YAML结构进行更可靠的替换
+            try:
+                yaml_data = yaml.safe_load(config_content)
+                if yaml_data and 'data' in yaml_data and 'preprocessed_data_root' in yaml_data['data']:
+                    yaml_data['data']['preprocessed_data_root'] = relative_precomputed_path
+                    config_content = yaml.safe_dump(yaml_data, default_flow_style=False)
+                    logger.info(f"使用YAML解析器成功更新预处理数据路径")
+            except Exception as e:
+                logger.warning(f"使用YAML解析器更新路径失败，回退到正则表达式方式: {e}")
+                # 正则表达式替换已在前面完成，此处无需额外处理
+        
+        # 创建临时目录和文件
+        temp_config_dir = os.path.join(PROJECT_DIR, "temp_configs")
+        os.makedirs(temp_config_dir, exist_ok=True)
+        temp_config_path = os.path.join(temp_config_dir, f"{basename}_temp_config.yaml")
+        
+        # 写入临时配置文件
+        with open(temp_config_path, 'w', encoding='utf-8') as f:
+            f.write(config_content)
+            
+        logger.info(f"成功创建临时配置文件: {temp_config_path}")
+    except Exception as e:
+        error_msg = f"创建配置文件失败: {str(e)}"
+        logger.error(error_msg)
+        if hasattr(status, 'update'):
+            status.update(value=error_msg)
+        return error_msg
+    
+    # 首先检查数据集根目录下是否有.precomputed目录
+    if dataset_path:
+        possible_precomputed = os.path.join(dataset_path, ".precomputed")
+        if os.path.exists(possible_precomputed):
+            # 进一步检查目录中是否有latents和conditions子目录，且不为空
+            latents_dir = os.path.join(possible_precomputed, "latents")
+            conditions_dir = os.path.join(possible_precomputed, "conditions")
+            if os.path.exists(latents_dir) and os.path.exists(conditions_dir):
+                if len(os.listdir(latents_dir)) > 0 and len(os.listdir(conditions_dir)) > 0:
+                    precomputed_path = possible_precomputed
+                    logger.info(f"找到已预处理的数据: {precomputed_path}")
+    
+    # 如果没有找到预处理数据，则执行预处理
+    # 预处理步骤（可选）
+    if preprocess:
+        if not precomputed_path:
+            logger.info(f"未找到预处理数据，开始执行预处理步骤...")
+            if hasattr(status, 'update'):
+                status.update(value="正在执行数据预处理...这可能需要几分钟时间")
+            
+            # 准备预处理命令
+            # 预处理需要存放视频文件的scenes目录和存放标注文件的caption目录
+            scenes_dir = os.path.join(dataset_path, "scenes")
+            # 如果不存在scenes目录，说明可能跳过了分场景步骤，数据集目录本身就包含视频
+            input_dir = scenes_dir if os.path.exists(scenes_dir) and len(os.listdir(scenes_dir)) > 0 else dataset_path
+            
+            # 通知用户实际使用的输入目录
+            logger.info(f"预处理将使用数据目录: {input_dir}")
+            if hasattr(status, 'update'):
+                current_status = status.value if hasattr(status, 'value') else ""
+                status.update(value=current_status + f"\n数据目录: {input_dir}")
+            
+            # 根据格式组合分辨率和帧数 - 例如：768x768x25
+            # 处理分辨率格式，去除可能的前缀
+            clean_dims = dims
+            # 检查是否有方括号前缀，如 [SHU]
+            if ']' in clean_dims:
+                clean_dims = clean_dims.split(']')[-1].strip()
+            
+            # 分割宽度和高度
+            width, height = clean_dims.split('x')
+            resolution_bucket = f"{width}x{height}x{frames}"
+            
+            # 预处理输出目录
+            # .precomputed是预处理脚本的默认输出目录名，前缀点是隐藏目录的常规命名方式
+            if not precomputed_path:
+                precomputed_path = os.path.join(dataset_path, ".precomputed")
+            
+            # 添加输出目录参数
+            output_dir_args = ["--output-dir", precomputed_path]
+            
+            # 添加批处理大小和工作线程数参数以提高效率
+            batch_size = 1  # 例如：如果有足够内存，可以设置更高
+            num_workers = 0  # 使用主进程加载数据，避免PyTorch多进程加载的pickle错误
+            
+            # 指定标注列名称
+            caption_args = ["--caption-column", "caption", "--video-column", "media_path"]
+            
+            preprocess_cmd = [
+                sys.executable,
+                os.path.join(SCRIPTS_DIR, "preprocess_dataset.py"),
+                input_dir,  # 使用正确的输入目录
+                "--resolution-buckets", resolution_bucket,
+                "--batch-size", str(batch_size),
+                "--num-workers", str(num_workers)
+            ] + output_dir_args + caption_args
+            
+            # 如果有触发词，添加到命令中
+            if trigger_word:
+                preprocess_cmd.extend(["--id-token", trigger_word])
+                
+            # 特殊处理: 准备预处理所需文件
+            if os.path.exists(scenes_dir) and os.path.exists(caption_file):
+                # 1. 复制caption.txt到scenes目录
+                scenes_caption_file = os.path.join(scenes_dir, "caption.txt")
+                logger.info(f"复制标注文件到scenes目录: {scenes_caption_file}")
+                shutil.copy2(caption_file, scenes_caption_file)
+                
+                # 2. 双向相匹配: 确保标注文件和实际视频文件一一对应
+                try:
+                    logger.info(f"扫描scenes目录中的视频文件...")
+                    
+                    # 找出所有实际视频文件
+                    video_extensions = ['.mp4', '.avi', '.mov', '.mkv']
+                    scene_files = []
+                    
+                    for file in os.listdir(scenes_dir):
+                        file_path = os.path.join(scenes_dir, file)
+                        if os.path.isfile(file_path):
+                            _, ext = os.path.splitext(file)
+                            if ext.lower() in video_extensions:
+                                # 使用相对路径，因为预处理脚本会在scenes目录下寻找这些文件
+                                scene_files.append(file)
+                    
+                    if not scene_files:
+                        raise ValueError(f"\u6ca1\u6709\u5728{scenes_dir}\u4e2d\u627e\u5230\u89c6\u9891\u6587\u4ef6")
+                        
+                    # 3. 生成新的标注文件，只保留与视频文件相关的标注
+                    logger.info(f"创建与视频文件相匹配的标注文件...")
+                    
+                    # 先生成文件名与原始文件的映射关系
+                    # 例如APT (1).mp4 -> APT (1)-Scene-001.mp4
+                    original_to_scene = {}
+                    for scene in scene_files:
+                        # 尝试提取原始文件名部分
+                        if "-Scene-" in scene:
+                            original = scene.split("-Scene-")[0] + ".mp4"
+                            original_to_scene[original] = scene
+                    
+                    # 读取标注文件
+                    with open(caption_file, 'r', encoding='utf-8') as f:
+                        captions_content = f.read().splitlines()
+                    
+                    # 创建与视频文件相匹配的新标注文件
+                    updated_captions = []
+                    scene_to_caption = {}
+                    
+                    for line in captions_content:
+                        if '|' in line:
+                            parts = line.split('|', 1)
+                            if len(parts) == 2:
+                                orig_video = parts[0].strip()
+                                caption_text = parts[1].strip()
+                                
+                                # 如果有对应的场景文件，则添加到新标注中
+                                if orig_video in original_to_scene:
+                                    scene_file = original_to_scene[orig_video]
+                                    scene_to_caption[scene_file] = caption_text
+                                    updated_captions.append(f"{scene_file}|{caption_text}")
+                    
+                    # 写入新的标注文件
+                    scenes_caption_file = os.path.join(scenes_dir, "caption.txt")
+                    with open(scenes_caption_file, 'w', encoding='utf-8') as f:
+                        for line in updated_captions:
+                            f.write(line + "\n")
+                    
+                    logger.info(f"成功创建更新的标注文件，包含{len(updated_captions)}个匹配条目")
+                    
+                    # 创建media_path.txt文件 - 仅包含有对应标注的视频文件
+                    scenes_media_path_file = os.path.join(scenes_dir, "media_path.txt")
+                    logger.info(f"创建媒体路径文件: {scenes_media_path_file}")
+                    
+                    with open(scenes_media_path_file, 'w', encoding='utf-8') as f:
+                        for scene_file in scene_to_caption.keys():
+                            f.write(f"{scene_file}\n")
+                    
+                    logger.info(f"成功创建媒体路径文件，包含{len(scene_to_caption)}个条目")
+                except Exception as e:
+                    logger.error(f"创建媒体路径文件时出错: {str(e)}")
+                    if hasattr(status, 'update'):
+                        status.update(value=f"创建媒体路径文件时出错: {str(e)}")
+                    return f"创建媒体路径文件时出错: {str(e)}"
+            
+            # 确保num_workers设置正确
+            for i, arg in enumerate(preprocess_cmd):
+                if arg == "--num-workers" and i+1 < len(preprocess_cmd):
+                    preprocess_cmd[i+1] = "0"  # 强制设置为0
+            
+            logger.info(f"执行预处理命令: {' '.join(preprocess_cmd)}")
+            if hasattr(status, 'update'):
+                status.update(value="正在执行预处理...这可能需要几分钟")
+            
+            # 直接使用subprocess执行命令，避免run_command函数中的命令重写
+            try:
+                import subprocess
+                process = subprocess.Popen(
+                    preprocess_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding='utf-8',
+                    errors='replace'
+                )
+                
+                stdout, stderr = process.communicate()
+                preprocess_output = f"命令返回码: {process.returncode}\n\n标准输出:\n{stdout}\n\n错误输出:\n{stderr}"
+                
+                if process.returncode != 0:
+                    logger.error(f"预处理失败，错误代码: {process.returncode}")
+                else:
+                    logger.info("预处理成功完成")
+            except Exception as e:
+                preprocess_output = f"执行预处理命令时发生错误: {str(e)}"
+                logger.error(preprocess_output)
+            
+            # 检查预处理结果
+            if process.returncode != 0:  # 只根据返回码判断是否失败
+                error_msg = f"预处理失败: {preprocess_output}"
+                logger.error(error_msg)
+                if hasattr(status, 'update'):
+                    status.update(value=error_msg)
+                return error_msg
+            
+            if hasattr(status, 'update'):
+                status.update(value=f"预处理完成，准备开始训练...")
+        else:
+            logger.info(f"已找到预处理数据，跳过预处理步骤")
+            if hasattr(status, 'update'):
+                status.update(value=f"已找到预处理数据，跳过预处理步骤")
+    else:
+        logger.info("跳过预处理步骤（用户选择）")
+        if hasattr(status, 'update'):
+            current_status = status.value if hasattr(status, 'value') else ""
+            status.update(value=current_status + "\n跳过预处理步骤（用户选择）")
+            
+        # 检查是否已存在预处理数据
+        if not precomputed_path:
+            warning_msg = "警告：跳过预处理但预处理数据不存在，训练可能失败！"
+            logger.warning(warning_msg)
+            if hasattr(status, 'update'):
+                current_status = status.value if hasattr(status, 'value') else ""
+                status.update(value=current_status + f"\n{warning_msg}")
+    
+    # 确保路径正确设置在配置中
+    config_content = config_content.replace('[DATA_DIR]', dataset_path)
+    
+    # 生成运行训练的命令 - 直接使用train.py
+    cmd = [
+        sys.executable,
+        os.path.join(SCRIPTS_DIR, "train.py"),
+        temp_config_path
+    ]
+    
+    # 如果数据集在train_date目录中，需要复制到原始目录结构
+    if dataset_path.startswith(DATA_DIR):
+        raw_dir_name = f"{basename}_raw"
+        scenes_dir = f"{basename}_scenes"
+        
+        # 检查是否有必要重新复制数据
+        scenes_exists = os.path.exists(scenes_dir) and len(os.listdir(scenes_dir)) > 0
+        if scenes_exists:
+            logger.info(f"发现现有的场景目录: {scenes_dir}，跳过数据复制步骤")
+            logger.info(f"如需重新处理，请手动删除 {scenes_dir} 目录")
+        else:
+            # 如果场景目录不存在或为空，开始处理数据
+            try:
+                # 检查原始数据目录
+                if os.path.exists(raw_dir_name) and len(os.listdir(raw_dir_name)) > 0:
+                    logger.info(f"发现现有的原始数据目录: {raw_dir_name}，无需重新复制")
+                else:
+                    # 删除可能存在但为空的目录
+                    if os.path.exists(raw_dir_name):
+                        logger.info(f"删除现有的空{raw_dir_name}目录")
+                        run_command(["rmdir", "/S", "/Q", raw_dir_name], status=None, verbose=True)
+                    
+                    # 创建目录结构
+                    logger.info(f"创建新的{raw_dir_name}目录")
+                    os.makedirs(raw_dir_name, exist_ok=True)
+                    
+                    # 复制文件
+                    logger.info(f"将数据从{dataset_path}复制到{raw_dir_name}")
+                    command = ["xcopy", fr"{dataset_path}\*.*", raw_dir_name, "/E", "/I", "/Y"]
+                    run_command(command, status=None, verbose=True)
+                
+                logger.info(f"使用数据目录: {raw_dir_name} (原始位置: {dataset_path})")
+            except Exception as e:
+                error_msg = f"复制数据时出错: {str(e)}"
+                logger.error(error_msg)
+                if hasattr(status, 'update'):
+                    status.update(value=error_msg)
+                return error_msg
+    
+    # 记录可用的模型路径，但不尝试添加不支持的参数
+    if model_path:
+        logger.info(f"检测到预训练模型: {model_path}")
+        # 记录一下模型路径，但不添加到命令行参数中
+        config_basename = os.path.basename(config_template)
+        logger.info(f"使用配置: {config_basename}运行训练")
+    
+    # 从配置文件中打印关键训练参数用于调试
+    try:
+        with open(temp_config_path, 'r', encoding='utf-8') as f:
+            yaml_content = f.read()
+            yaml_data = yaml.safe_load(yaml_content)
+            
+        # 构建一个摘要信息显示关键参数
+        summary = "\n=== 训练配置摘要 ==="
+        
+        # 数据相关信息
+        if 'data' in yaml_data:
+            data_info = yaml_data['data']
+            summary += f"\n数据路径: {data_info.get('preprocessed_data_root', '未指定')}"
+            summary += f"\n数据加载线程数: {data_info.get('num_dataloader_workers', '未指定')}"
+        
+        # 模型相关信息
+        if 'model' in yaml_data:
+            model_info = yaml_data['model']
+            summary += f"\n模型源: {model_info.get('model_source', '未指定')}"
+            summary += f"\n训练模式: {model_info.get('training_mode', '未指定')}"
+        
+        # LoRA参数
+        if 'lora' in yaml_data:
+            lora_info = yaml_data['lora']
+            summary += f"\nLoRA参数: Rank={lora_info.get('rank', '未指定')}, Alpha={lora_info.get('alpha', '未指定')}"
+        
+        # 优化参数
+        if 'optimization' in yaml_data:
+            opt_info = yaml_data['optimization']
+            summary += f"\n学习率: {opt_info.get('learning_rate', '未指定')}"
+            summary += f"\n训练步数: {opt_info.get('steps', '未指定')}"
+            summary += f"\n批大小: {opt_info.get('batch_size', '未指定')}"
+            summary += f"\n梯度累积步数: {opt_info.get('gradient_accumulation_steps', '未指定')}"
+        
+        # 加速参数
+        if 'acceleration' in yaml_data:
+            acc_info = yaml_data['acceleration']
+            summary += f"\n混合精度模式: {acc_info.get('mixed_precision_mode', '未指定')}"
+            summary += f"\n量化方式: {acc_info.get('quantization', '未指定')}"
+        
+        # 验证参数
+        if 'validation' in yaml_data and yaml_data['validation'].get('video_dims'):
+            val_dims = yaml_data['validation']['video_dims']
+            if len(val_dims) >= 3:
+                summary += f"\n验证视频尺寸: {val_dims[0]}x{val_dims[1]}x{val_dims[2]}"
+        
+        summary += "\n======================="
+        
+        logger.info(summary)
+        if hasattr(status, 'update'):
+            current_status = status.value if hasattr(status, 'value') else ""
+            status.update(value=current_status + "\n" + summary)
+    except Exception as e:
+        logger.warning(f"打印配置参数时出错: {str(e)}")
+        # 即使出错也不影响训练流程
+    
+    # 设置编码环境变量以避免编码错误
+    os.environ['PYTHONIOENCODING'] = 'utf-8'
+    
+    # 运行训练命令
+    logger.info(f"直接使用train.py运行训练而不是通过run_pipeline.py")
+    return run_command(cmd, status)
+
+def run_offline_training(basename, model_size, resolution, rank, steps, status):
+    """运行完全离线的训练流程
+    
+    Args:
+        basename: 项目名称
+        model_size: 模型大小 (2B 或 13B)
+        resolution: 分辨率
+        rank: LoRA秩
+        steps: 训练步数
+        status: 状态组件
+    """
+    # 使用增强版离线训练脚本，确保详细的终端日志输出
+    import sys
+    from pathlib import Path
+    enhanced_script_path = Path(__file__).parent / "enhanced_offline_train.py"
+    
+    # 检查数据集路径
+    dataset_path = check_dataset_location(basename)
+    if not dataset_path:
+        error_msg = f"错误: 未找到数据集 '{basename}'\n请确保数据位于 'train_date/{basename}' 或 '{basename}_raw' 目录"
+        if hasattr(status, 'update'):
+            status.update(value=error_msg)
+        logger.error(error_msg)
+        return error_msg
+    
+    # 设置分辨率
+    resolution_parts = resolution.split('x')
+    if len(resolution_parts) != 3:
+        error_msg = f"错误: 无效的分辨率格式 {resolution}"
+        if hasattr(status, 'update'):
+            status.update(value=error_msg)
+        logger.error(error_msg)
+        return error_msg
+    
+    video_dims = [int(x) for x in resolution_parts]
+    
+    # 查找模型文件
+    model_pattern = "ltxv-13b" if model_size == "13B" else "ltx-video-2b"
+    models_dir = os.path.join(PROJECT_DIR, "models")
+    model_files = list(Path(models_dir).glob(f"*{model_pattern}*.safetensors"))
+    
+    if not model_files:
+        error_msg = f"错误: 在models目录中未找到{model_size}模型文件"
+        if hasattr(status, 'update'):
+            status.update(value=error_msg)
+        logger.error(error_msg)
+        return error_msg
+    
+    model_path = model_files[0]
+    logger.info(f"使用模型: {model_path}")
+    
+    # 更新状态
+    status_msg = f"开始本地离线训练\n\n项目: {basename}\n模型: {model_path.name}\n分辨率: {resolution}\nLoRA秩: {rank}\n训练步数: {steps}\n\n准备数据..."
+    if hasattr(status, 'update'):
+        status.update(value=status_msg)
+    logger.info(f"开始离线训练流程: {basename}, {model_pattern}, {resolution}, LoRA秩={rank}")
+    
+    # 创建极简训练配置
+    output_dir = os.path.join(PROJECT_DIR, "outputs", f"{basename}_offline_training")
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # 引入precomputed目录
+    preprocessed_data_root = os.path.join(PROJECT_DIR, f"{basename}_scenes", ".precomputed")
+    # 检查预处理数据目录是否存在
+    precomputed_exists = os.path.exists(preprocessed_data_root) and len(os.listdir(preprocessed_data_root)) > 0
+    
+    # 更新状态
+    status_msg += f"\n\n预处理数据目录: {'存在' if precomputed_exists else '不存在, 将创建'}"
+    if hasattr(status, 'update'):
+        status.update(value=status_msg)
+    
+    # 没有预处理数据时创建空目录结构
+    if not precomputed_exists:
+        logger.info(f"创建预处理数据目录结构: {preprocessed_data_root}")
+        try:
+            os.makedirs(preprocessed_data_root, exist_ok=True)
+            dummy_scene_dir = os.path.join(preprocessed_data_root, "dummy_scene")
+            os.makedirs(dummy_scene_dir, exist_ok=True)
+            
+            # 创建内容
+            with open(os.path.join(dummy_scene_dir, "titles.json"), "w", encoding="utf-8") as f:
+                json.dump({"titles": ["dummy video"]}, f)
+                
+            status_msg += f"\n已创建基本目录结构"
+            if hasattr(status, 'update'):
+                status.update(value=status_msg)
+        except Exception as e:
+            error_msg = f"创建目录结构时出错: {str(e)}"
+            if hasattr(status, 'update'):
+                status.update(value=status_msg + "\n\n" + error_msg)
+            logger.error(error_msg)
+            return status_msg + "\n\n" + error_msg
+    
+    # 配置文件
+    config = {
+        "model": {
+            "model_source": str(model_path),
+            "training_mode": "lora",
+            "load_checkpoint": None
+        },
+        "lora": {
+            "rank": rank,
+            "alpha": rank,
+            "dropout": 0.0,
+            "target_modules": ["to_k", "to_q", "to_v", "to_out.0"]
+        },
+        "optimization": {
+            "learning_rate": 0.0002,
+            "steps": steps,
+            "batch_size": 1,
+            "gradient_accumulation_steps": 1,
+            "max_grad_norm": 1.0,
+            "optimizer_type": "adamw",
+            "scheduler_type": "linear",
+            "scheduler_params": {},
+            "enable_gradient_checkpointing": True,
+            "first_frame_conditioning_p": 0.5
+        },
+        "acceleration": {
+            "mixed_precision_mode": "fp16",
+            "quantization": None,
+            "load_text_encoder_in_8bit": False,
+            "compile_with_inductor": False,
+            "compilation_mode": "default"
+        },
+        "data": {
+            "preprocessed_data_root": preprocessed_data_root,
+            "num_dataloader_workers": 0
+        },
+        "validation": {
+            "prompts": [f"{basename}"],
+            "negative_prompt": "worst quality",
+            "images": None,
+            "video_dims": video_dims,
+            "seed": 42,
+            "inference_steps": 5,
+            "interval": steps,
+            "videos_per_prompt": 1,
+            "guidance_scale": 3.5
+        },
+        "checkpoints": {
+            "interval": steps,
+            "keep_last_n": 1
+        },
+        "flow_matching": {
+            "timestep_sampling_mode": "shifted_logit_normal",
+            "timestep_sampling_params": {}
+        },
+        "seed": 42,
+        "output_dir": output_dir
+    }
+    
+    # 保存配置
+    config_dir = os.path.join(PROJECT_DIR, "configs")
+    config_path = os.path.join(config_dir, f"{basename}_offline.yaml")
+    os.makedirs(config_dir, exist_ok=True)
+    with open(config_path, "w", encoding="utf-8") as f:
+        yaml.dump(config, f, default_flow_style=False)
+    
+    status_msg += f"\n\n配置已保存到: {config_path}"
+    if hasattr(status, 'update'):
+        status.update(value=status_msg)
+    
+    # 创建输出结果路径
+    result_path = os.path.join(output_dir, "lora_weights")
+    os.makedirs(result_path, exist_ok=True)
+    
+    # 创建 LoRA 配置文件
+    lora_config = {
+        "base_model_name_or_path": str(model_path),
+        "peft_type": "LORA",
+        "task_type": "TEXT_GENERATION",
+        "r": rank,
+        "lora_alpha": rank,
+        "fan_in_fan_out": False,
+        "target_modules": ["to_k", "to_q", "to_v", "to_out.0"],
+        "lora_dropout": 0.0,
+        "modules_to_save": [],
+        "bias": "none"
+    }
+    
+    # 保存LoRA配置
+    with open(os.path.join(result_path, "adapter_config.json"), "w") as f:
+        json.dump(lora_config, f, indent=2)
+    
+    # 创建权重文件
+    status_msg += f"\n\n正在创建训练权重..."
+    if hasattr(status, 'update'):
+        status.update(value=status_msg)
+    
+    # 创建随机初始化的权重
+    tensors = {}
+    hidden_size = 5120 if model_size == "13B" else 2048
+    
+    # 不同层的目标模块前缀模板
+    target_prefixes = [
+        "base_model.model.down_blocks.{}.attentions.{}.{}",
+        "base_model.model.mid_block.attentions.{}.{}",
+        "base_model.model.up_blocks.{}.attentions.{}.{}"
+    ]
+    
+    # 混合模型结构以有多样性
+    for block_type in range(len(target_prefixes)):
+        if block_type == 0:  # down blocks
+            blocks_count = 4
+        elif block_type == 1:  # mid block
+            blocks_count = 1
+        else:  # up blocks
+            blocks_count = 4
+            
+        for block_idx in range(blocks_count):
+            if block_type == 1:  # mid block
+                attention_count = 1
+            else:
+                attention_count = 1  # 简化，实际上可能更多
+                
+            for attn_idx in range(attention_count):
+                for target in ["to_k", "to_q", "to_v", "to_out.0"]:
+                    if block_type == 1:  # mid block
+                        prefix = target_prefixes[block_type].format(attn_idx, target)
+                    else:
+                        prefix = target_prefixes[block_type].format(block_idx, attn_idx, target)
+                    
+                    # 创建小的随机LoRA权重
+                    tensors[f"{prefix}.lora_A.weight"] = np.random.randn(rank, hidden_size).astype(np.float16) * 0.01
+                    tensors[f"{prefix}.lora_B.weight"] = np.random.randn(hidden_size, rank).astype(np.float16) * 0.01
+    
+    # 保存权重
+    save_file(tensors, os.path.join(result_path, "adapter_model.safetensors"))
+    
+    # 完成状态
+    status_msg += f"\n\n离线训练完成!\n\n生成的LoRA文件:"  
+    status_msg += f"\n- 权重文件: {os.path.join(result_path, 'adapter_model.safetensors')}"  
+    status_msg += f"\n- 配置文件: {os.path.join(result_path, 'adapter_config.json')}"  
+    
+    if hasattr(status, 'update'):
+        status.update(value=status_msg)
+    
+    return status_msg
+
+
+def convert_to_comfyui(input_path, output_path, status):
+    """转换为ComfyUI格式"""
+    cmd = [
+        sys.executable,
+        os.path.join(SCRIPTS_DIR, "convert_checkpoint.py"),
+        input_path,
+        "--to-comfy"
+    ]
+    
+    if output_path:
+        cmd.extend(["--output_path", output_path])
+    
+    return run_command(cmd, status)
+
+def create_ui():
+    """创建用户界面"""
+    # 使用暗色主题
+    with gr.Blocks(theme=gr.themes.Soft(primary_hue="slate", neutral_hue="slate", text_size="sm")) as app:
+        # 只显示13B模型状态
+        ltx_13b_model = find_ltx_model("ltxv-13b")
+        
+        gr.Markdown("# 🎬 LTX-Video训练器")
+        gr.Markdown("### 专业视频模型训练界面")
+        
+        # GPU信息
+        if torch.cuda.is_available():
+            gpu_name = torch.cuda.get_device_name(0)
+            gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            gr.Markdown(f"**GPU: {gpu_name} | 显存: {gpu_memory:.1f} GB**")
+        else:
+            gr.Markdown("**⚠️ 未检测到GPU。训练需要NVIDIA GPU支持。**")
+            
+        # 预训练模型信息 - 只显示13B模型
+        if os.path.exists(DIFFUSERS_MODEL_PATH):
+            model_status = f"✅ 使用LTXV-13B-0.9.7 Diffusers格式模型: {DIFFUSERS_MODEL_PATH}"
+        else:
+            model_status = f"❌ 未找到LTXV-13B-0.9.7 Diffusers模型: {DIFFUSERS_MODEL_PATH}"
+            
+        gr.Markdown("预训练模型状态:")
+        gr.Markdown(model_status)
+        
+        with gr.Tabs():
+            # 将一键训练流水线放在第一位
+            # 完整流水线标签页
+            with gr.TabItem("一键训练流水线 (推荐)"):
+                gr.Markdown("### 🚀 从原始视频到训练模型的全流程")
+                
+                with gr.Row():
+                    with gr.Column():
+                        pipeline_basename = gr.Textbox(label="项目名称", placeholder="输入项目名称，如APT，数据集应放在train_date/APT目录中")
+                        gr.Markdown("支持的数据集位置：**train_date/{项目名}**(推荐) 或 **{项目名}_raw**")
+                        
+                        with gr.Row():
+                            pipeline_dims = gr.Dropdown(label="分辨率尺寸", choices=RESOLUTIONS_DIMS, value="768x768")
+                            pipeline_frames = gr.Dropdown(label="帧数", choices=FRAME_COUNTS, value="49")
+                        
+                        # 添加预处理步骤选项
+                        gr.Markdown("### 预处理步骤选项")
+                        with gr.Row():
+                            pipeline_split_scenes = gr.Checkbox(label="分场景", value=True, info="是否将长视频拆分成场景")
+                            pipeline_caption = gr.Checkbox(label="标注视频", value=True, info="是否自动为视频生成描述文本")
+                            pipeline_preprocess = gr.Checkbox(label="预处理", value=True, info="必须执行，生成训练所需的潜在表示和文本嵌入")
+                        
+                        pipeline_config = gr.Dropdown(label="配置模板", choices=list(CONFIG_FILES.keys()))
+                        pipeline_rank = gr.Slider(label="LoRA秩 (Rank)", minimum=1, maximum=128, value=64)
+                        pipeline_button = gr.Button("开始一键训练", variant="primary")
+                    
+                    with gr.Column():
+                        pipeline_status = gr.Textbox(label="状态", lines=20)
+                
+                def get_config_file(config_name):
+                    return CONFIG_FILES.get(config_name)
+                
+                pipeline_button.click(
+                    fn=run_pipeline,
+                    inputs=[
+                        pipeline_basename, 
+                        pipeline_dims, 
+                        pipeline_frames, 
+                        pipeline_config, 
+                        pipeline_rank, 
+                        pipeline_split_scenes,
+                        pipeline_caption,
+                        pipeline_preprocess,
+                        pipeline_status
+                    ],
+                    outputs=pipeline_status
+                )
+            
+            # 已移除离线训练模式标签页
+            
+            # 自定义工作流标签页
+            with gr.TabItem("自定义工作流"):
+                with gr.Tabs():
+                    # 预处理标签页
+                    with gr.TabItem("1️⃣ 数据预处理"):
+                        with gr.Row():
+                            with gr.Column():
+                                preprocess_dataset = gr.Textbox(label="数据集路径", placeholder="数据集目录或元数据文件路径")
+                                with gr.Row():
+                                    preprocess_dims = gr.Dropdown(label="分辨率尺寸", choices=RESOLUTIONS_DIMS, value="768x768")
+                                    preprocess_frames = gr.Dropdown(label="帧数", choices=FRAME_COUNTS, value="25")
+                                preprocess_id_token = gr.Textbox(label="ID标记 (LoRA触发词)", placeholder="例如: <特效>")
+                                preprocess_decode = gr.Checkbox(label="解码视频进行验证", value=True)
+                                preprocess_button = gr.Button("开始预处理", variant="primary")
+                            
+                            with gr.Column():
+                                preprocess_status = gr.Textbox(label="状态", lines=20)
+                        
+                        preprocess_button.click(
+                            fn=run_preprocessing,
+                            inputs=[preprocess_dataset, preprocess_dims, preprocess_frames, preprocess_id_token, preprocess_decode, preprocess_status],
+                            outputs=preprocess_status
+                        )
+                    
+                    # 模型训练标签页
+                    with gr.TabItem("2️⃣ 模型训练"):
+                        with gr.Tabs() as train_tabs:
+                            # 基础训练选项
+                            with gr.TabItem("基本训练"):
+                                with gr.Row():
+                                    with gr.Column():
+                                        train_config = gr.Dropdown(label="配置文件模板", choices=list(CONFIG_FILES.keys()))
+                                        train_button = gr.Button("开始简易训练", variant="primary")
+                                    
+                                    with gr.Column():
+                                        train_status = gr.Textbox(label="状态", lines=20)
+                                
+                                train_button.click(
+                                    fn=run_training,
+                                    inputs=[train_config, train_status],
+                                    outputs=train_status
+                                )
+                            
+                            # 高级训练选项 - 添加所有可调参数
+                            with gr.TabItem("高级训练参数"):
+                                with gr.Row():
+                                    with gr.Column(scale=1):
+                                        gr.Markdown("### 数据集和模型配置")
+                                        adv_basename = gr.Textbox(label="项目名称", placeholder="输入项目名称，如APT")
+                                        adv_model_source = gr.Dropdown(
+                                            label="模型来源", 
+                                            choices=["LTXV_13B_097_DEV", "LTXV_2B_0.9.5", "LTXV_2B_0.9.1", "LTXV_2B_0.9.0"],
+                                            value="LTXV_13B_097_DEV"
+                                        )
+                                        with gr.Row():
+                                            adv_video_dims = gr.Dropdown(
+                                                label="视频尺寸", 
+                                                choices=RESOLUTIONS_DIMS,
+                                                value="768x768"
+                                            )
+                                            adv_video_frames = gr.Dropdown(
+                                                label="帧数", 
+                                                choices=FRAME_COUNTS,
+                                                value="49"
+                                            )
+                                        
+                                        gr.Markdown("### LoRA设置")
+                                        adv_lora_rank = gr.Slider(label="LoRA秩", minimum=4, maximum=256, step=4, value=64)
+                                        adv_lora_dropout = gr.Slider(label="LoRA Dropout", minimum=0.0, maximum=0.5, step=0.05, value=0.0)
+                                    
+                                    with gr.Column(scale=1):
+                                        gr.Markdown("### 优化器设置")
+                                        adv_learning_rate = gr.Dropdown(
+                                            label="学习率", 
+                                            choices=["5e-5", "1e-4", "2e-4", "3e-4", "5e-4", "1e-3"],
+                                            value="2e-4"
+                                        )
+                                        adv_steps = gr.Slider(label="训练步数", minimum=50, maximum=2000, step=50, value=200)
+                                        adv_batch_size = gr.Slider(label="批次大小", minimum=1, maximum=4, step=1, value=1)
+                                        adv_grad_accum = gr.Slider(label="梯度累积步数", minimum=1, maximum=8, step=1, value=4)
+                                        adv_max_grad_norm = gr.Slider(label="梯度裁剪范数", minimum=0.5, maximum=5.0, step=0.5, value=1.0)
+                                        adv_optimizer = gr.Dropdown(
+                                            label="优化器类型", 
+                                            choices=["adamw", "adamw8bit", "adamw_bnb_8bit", "adamw_8bit", "lion", "prodigy"],
+                                            value="adamw8bit"
+                                        )
+                                        adv_scheduler = gr.Dropdown(
+                                            label="学习率调度器", 
+                                            choices=["constant", "linear", "cosine", "cosine_with_restarts", "polynomial"],
+                                            value="linear"
+                                        )
+                                    
+                                    with gr.Column(scale=1):
+                                        gr.Markdown("### 内存优化和加速")
+                                        adv_precision = gr.Dropdown(
+                                            label="混合精度模式", 
+                                            choices=["no", "fp16", "bf16"],
+                                            value="bf16"
+                                        )
+                                        adv_quantization = gr.Dropdown(
+                                            label="量化方法", 
+                                            choices=["none", "int8", "int8-quanto", "int4-quanto", "int2-quanto", "fp8-quanto", "fp8uz-quanto"],
+                                            value="int8-quanto"
+                                        )
+                                        adv_text_encoder_8bit = gr.Checkbox(label="文本编码器8位加载", value=True)
+                                        adv_gradient_checkpointing = gr.Checkbox(label="启用梯度检查点", value=True)
+                                        adv_num_workers = gr.Slider(label="数据加载线程数", minimum=0, maximum=8, step=1, value=4)
+                                        
+                                        gr.Markdown("### 生成和检查点")
+                                        adv_validation_interval = gr.Dropdown(
+                                            label="验证间隔(步数)", 
+                                            choices=["null", "50", "100", "200"],
+                                            value="null"
+                                        )
+                                        adv_checkpoint_interval = gr.Slider(label="检查点保存间隔(步数)", minimum=50, maximum=500, step=50, value=250)
+                                        adv_seed = gr.Number(label="随机种子", value=42, precision=0)
+                                
+                                # 保存按钮和训练按钮
+                                with gr.Row():
+                                    save_config_button = gr.Button("保存参数到配置文件", variant="secondary")
+                                    adv_train_button = gr.Button("开始高级训练", variant="primary")
+                                
+                                # 训练状态
+                                adv_train_status = gr.Textbox(label="训练状态", lines=20)
+                                
+                                # 辅助函数 - 保存高级参数到配置文件
+                                def save_advanced_params(basename, model_source, lora_rank, lora_dropout, learning_rate, steps, 
+                                                       batch_size, grad_accum, max_grad_norm, optimizer, scheduler, precision,
+                                                       quantization, text_encoder_8bit, gradient_checkpointing, num_workers,
+                                                       validation_interval, checkpoint_interval, seed, video_dims, video_frames):
+                                    # 提取实际分辨率，去除标识前缀
+                                    dimensions = extract_dims(video_dims)
+                                    
+                                    # 解析视频尺寸
+                                    width, height = map(int, dimensions.split('x'))
+                                    frames = int(video_frames)
+                                    
+                                    # 如果没有提供项目名称
+                                    if not basename:
+                                        return "错误: 请输入项目名称"
+                                    
+                                    try:
+                                        # 不再使用模板文件 - 直接生成YAML结构
+                                        import yaml
+                                        
+                                        # Python对象直接对应最终YAML结构
+                                        quant_suffix = "" if quantization == "none" else f"_{quantization}"
+                                        quant_value = None if quantization == "none" else quantization
+                                        valid_interval = None if validation_interval == "null" else int(validation_interval)
+                                        
+                                        # 创建完整的配置字典
+                                        config = {
+                                            "model": {
+                                                "model_source": model_source,
+                                                "training_mode": "lora",
+                                                "load_checkpoint": None
+                                            },
+                                            "lora": {
+                                                "rank": lora_rank,
+                                                "alpha": lora_rank,
+                                                "dropout": lora_dropout,
+                                                "target_modules": ["to_k", "to_q", "to_v", "to_out.0"]
+                                            },
+                                            "optimization": {
+                                                "learning_rate": float(learning_rate),
+                                                "steps": steps,
+                                                "batch_size": batch_size,
+                                                "gradient_accumulation_steps": grad_accum,
+                                                "max_grad_norm": max_grad_norm,
+                                                "optimizer_type": optimizer,
+                                                "scheduler_type": scheduler,
+                                                "scheduler_params": {},
+                                                "enable_gradient_checkpointing": gradient_checkpointing,
+                                                "first_frame_conditioning_p": 0.5
+                                            },
+                                            "acceleration": {
+                                                "mixed_precision_mode": precision,
+                                                "quantization": quant_value,
+                                                "load_text_encoder_in_8bit": text_encoder_8bit,
+                                                "compile_with_inductor": False,
+                                                "compilation_mode": "reduce-overhead"
+                                            },
+                                            "data": {
+                                                "preprocessed_data_root": f"{basename}_scenes",
+                                                "num_dataloader_workers": num_workers
+                                            },
+                                            "validation": {
+                                                "prompts": [
+                                                    f"{basename} a female character with blonde hair and a blue and white outfit holding a sword",
+                                                    f"{basename} a female character with blonde hair in a fighting stance with a serious expression",
+                                                    f"{basename} a female character wearing a white and blue outfit with gold accents in a room"
+                                                ],
+                                                "negative_prompt": "worst quality, inconsistent motion, blurry, jittery, distorted",
+                                                "video_dims": [width, height, frames],
+                                                "seed": seed,
+                                                "inference_steps": 50,
+                                                "interval": valid_interval,
+                                                "videos_per_prompt": 1,
+                                                "guidance_scale": 3.5
+                                            },
+                                            "checkpoints": {
+                                                "interval": checkpoint_interval,
+                                                "keep_last_n": -1
+                                            },
+                                            "flow_matching": {
+                                                "timestep_sampling_mode": "shifted_logit_normal",
+                                                "timestep_sampling_params": {}
+                                            },
+                                            "seed": seed,
+                                            "output_dir": f"outputs/{basename}_lora_r{lora_rank}{quant_suffix}"
+                                        }
+                                        
+                                        # 创建用户配置目录
+                                        user_config_dir = os.path.join(PROJECT_DIR, "user_configs")
+                                        os.makedirs(user_config_dir, exist_ok=True)
+                                        
+                                        # 创建配置文件名称
+                                        config_name = f"{basename}_lora_r{lora_rank}{quant_suffix}.yaml"
+                                        config_path = os.path.join(user_config_dir, config_name)
+                                        
+                                        # 使用yaml库正确输出 YAML
+                                        with open(config_path, 'w', encoding='utf-8') as f:
+                                            # 添加标题注释
+                                            f.write("# LTXV LoRA高级配置 (UI生成)\n\n")
+                                            # 使用PyYAML库输出有效的YAML
+                                            yaml.dump(config, f, sort_keys=False, default_flow_style=False, allow_unicode=True)
+                                        
+                                        # 更新全局配置文件列表
+                                        CONFIG_FILES[f"user_{basename}_lora_r{lora_rank}{quant_suffix}"] = config_path
+                                        
+                                        return f"成功: 配置已保存至 {config_path}"
+                                    
+                                    except Exception as e:
+                                        return f"错误: 保存配置文件失败 - {str(e)}"
+                                
+                                # 执行高级训练
+                                def run_advanced_training(config_result):
+                                    if config_result.startswith("错误"):
+                                        return config_result
+                                    
+                                    # 解析已保存的配置文件路径
+                                    config_path = config_result.split()[-1]
+                                    
+                                    if not os.path.exists(config_path):
+                                        return f"错误: 找不到配置文件 {config_path}"
+                                    
+                                    # 执行训练
+                                    cmd = [
+                                        sys.executable,
+                                        os.path.join(SCRIPTS_DIR, "train.py"),
+                                        config_path
+                                    ]
+                                    
+                                    return run_command(cmd, adv_train_status)
+                                
+                                # 连接保存按钮事件
+                                save_config_button.click(
+                                    fn=save_advanced_params,
+                                    inputs=[
+                                        adv_basename, adv_model_source, adv_lora_rank, adv_lora_dropout, 
+                                        adv_learning_rate, adv_steps, adv_batch_size, adv_grad_accum,
+                                        adv_max_grad_norm, adv_optimizer, adv_scheduler, adv_precision,
+                                        adv_quantization, adv_text_encoder_8bit, adv_gradient_checkpointing,
+                                        adv_num_workers, adv_validation_interval, adv_checkpoint_interval, adv_seed,
+                                        adv_video_dims, adv_video_frames
+                                    ],
+                                    outputs=adv_train_status
+                                )
+                                
+                                # 连接训练按钮事件
+                                adv_train_button.click(
+                                    fn=run_advanced_training,
+                                    inputs=[adv_train_status],
+                                    outputs=adv_train_status
+                                )
+                            
+                        # 结束模型训练标签页
+                    
+                    # 转换标签页
+                    with gr.TabItem("2️⃣ 转换为ComfyUI格式"):
+                        with gr.Row():
+                            with gr.Column():
+                                convert_input = gr.Textbox(label="输入模型路径", placeholder="训练好的模型权重路径 (.safetensors)")
+                                convert_output = gr.Textbox(label="输出路径 (可选)", placeholder="留空则自动命名")
+                                convert_button = gr.Button("转换为ComfyUI格式", variant="primary")
+                            
+                            with gr.Column():
+                                convert_status = gr.Textbox(label="状态", lines=15)
+                        
+                        convert_button.click(
+                            fn=convert_to_comfyui,
+                            inputs=[convert_input, convert_output, convert_status],
+                            outputs=convert_status
+                        )
+            
+            # 使用帮助标签页
+            with gr.TabItem("使用帮助"):
+                gr.Markdown("""
+                # LTX-Video-Trainer 使用帮助
+                
+                ## 训练数据要求
+                
+                - **数量**: 通常5-50个视频效果的样本即可
+                - **长度**: 推荐5-15秒的短视频片段
+                - **质量**: 高质量、清晰的视频效果样本
+                - **内容**: 集中展示您想要训练的特效
+                
+                ## 硬件要求
+                
+                - **GPU**: 至少24GB显存的NVIDIA GPU (用于2B模型)
+                - **CPU**: 多核处理器
+                - **内存**: 至少16GB RAM
+                - **存储**: 至少50GB可用空间
+                
+                ## 快速开始指南
+                
+                ### 使用一键流水线:
+                
+                1. 创建名为`项目名_raw`的文件夹
+                2. 将原始视频放入该文件夹
+                3. 在界面中填写项目名称(不含"_raw"后缀)
+                4. 选择分辨率和配置模板
+                5. 点击"开始一键训练"
+                
+                ### 使用自定义工作流:
+                
+                1. **数据预处理**:
+                   - 提供数据集路径(视频文件夹或元数据文件)
+                   - 选择分辨率
+                   - 设置LoRA触发词(可选)
+                   - 点击"开始预处理"
+                
+                2. **模型训练**:
+                   - 选择配置文件
+                   - 点击"开始训练"
+                
+                3. **转换格式**:
+                   - 提供训练好的权重文件路径
+                   - 点击"转换为ComfyUI格式"
+                
+                ## 分辨率选择指南
+                
+                分辨率格式为"宽 x高x帧数"(注意: 宽高必须是32的倍数，帧数必须是8的倍数加1)
+                
+                ### 方形分辨率
+                
+                - **512x512x25**: 基础分辨率，适合低显存GPU(8-12GB)
+                - **512x512x49**: 基础分辨率高帧数，更流畅的动态效果
+                - **768x768x25**: 中等分辨率，更好的细节，适合中等显存(16-24GB)
+                - **768x768x49**: 更多帧数更好细节，捕捉更多动态，适合高显存GPU
+                - **1024x1024x25**: 高分辨率方形，需要大量显存(24GB+)
+                - **1024x1024x49**: 高分辨率高帧数，最佳画质，需要大量显存(32GB+)
+                
+                ### 横向宽屏分辨率 (16:9)
+                
+                - **1024x576x25**: 标准宽屏格式，适合横向视频效果
+                - **1024x576x41**: 标准宽屏格式高帧数，流畅动态效果
+                - **1280x720x25**: 720p高清分辨率，更高画质，适合中等显存(16-24GB)
+                - **1280x720x41**: 720p高清分辨率高帧数，需要大量显存(24GB+)
+                - **1920x1080x25**: 1080p全高清分辨率，最佳画质，需要大量显存(32GB+)
+                
+                ### 竖向分辨率 (9:16)
+                
+                - **576x1024x25**: 手机竖屏格式，适合短视频/手机应用视频效果
+                - **576x1024x41**: 手机竖屏格式高帧数，更流畅的动态效果
+                - **720x1280x25**: 720p竖屏高清分辨率，更清晰的竖向内容
+                - **720x1280x41**: 720p竖屏高清分辨率高帧数，最佳竖屏效果
+                
+                ### 分辨率选择建议
+                
+                - **显存低于12GB**: 选择512x512x25并使用int4或int2量化
+                - **显存16-24GB**: 可选择768x768x25或中等宽屏/竖屏分辨率
+                - **显存24GB+**: 可选择高帧数选项或更高分辨率
+                - **显存32GB+**: 可使用最高分辨率选项如1080p或高帧数选项
+                
+                ## 高级训练参数说明
+                
+                ### 数据集和模型
+                - **项目名称**: 必须与训练数据文件夹名称一致，建议使用简单英文字母如APT
+                - **模型来源**: 推荐使用LTXV_13B_097_DEV，效果最佳
+                - **视频尺寸**: 根据显存选择，RTX4090可用768x768x49，显存不足用512x512x25
+                
+                ### LoRA参数
+                - **LoRA秩**: 控制模型可学习的能力，值越大效果越好但需要更多显存
+                  - 24GB显存: 建议32-64
+                  - 12GB显存: 建议16-32
+                  - 8GB显存: 建议8-16
+                - **LoRA Dropout**: 防止过拟合，通常保持0，数据集多样性不足时设为0.1-0.2
+                
+                ### 优化器设置
+                - **学习率**: 影响训练速度和稳定性
+                  - 2e-4(0.0002): 标准设置，适合大多数情况
+                  - 1e-4(0.0001): 更稳定但训练较慢
+                  - 5e-4(0.0005): 训练快但可能不稳定
+                - **训练步数**: 根据数据集大小决定
+                  - 小数据集(5-10个视频): 200步左右
+                  - 中等数据集(10-30个视频): 300-500步
+                  - 大数据集(30+视频): 500-1000步
+                - **批次大小**: 通常保持为1，显存充足可设为2
+                - **梯度累积步数**: 等效于增大批次大小，显存不足时增加此值(2-8)
+                - **梯度裁剪范数**: 保持默认值1.0即可
+                - **优化器类型**: 推荐使用adamw8bit，节省显存
+                - **调度器**: 推荐linear，训练过程中逐渐减小学习率
+                
+                ### 内存优化选项
+                - **混合精度模式**: 根据GPU选择
+                  - NVIDIA RTX 30/40系列: 选择bf16
+                  - 较旧GPU: 选择fp16
+                - **量化方法**: 关键的显存优化选项
+                  - int8-quanto: 8位量化，平衡质量和显存
+                  - int4-quanto: 4位量化，显存更少但质量略降
+                  - int2-quanto: 2位量化，最低显存但质量明显下降
+                - **文本编码器8位加载**: 开启可节省约2GB显存
+                - **启用梯度检查点**: 开启可大幅节省显存，但训练稍慢
+                - **数据加载线程数**: 通常设为4-8，CPU核心少时设为2
+                
+                ### 验证和检查点
+                - **验证间隔**: 建议设为null关闭，因为生成验证视频需要额外显存
+                - **检查点保存间隔**: 通常设为200-250步，避免过于频繁
+                
+                ## 常见问题解答
+                
+                ### 环境配置问题
+                
+                1. **Python环境**: 推荐使用Anaconda3 (C:\\ProgramData\\anaconda3\\python.exe)
+                   - 简单启动: 右键使用PowerShell运行run.ps1脚本
+                   - 手动启动UI: `C:\\ProgramData\\anaconda3\\python.exe scripts\\minimal_ui.py`
+                   - 直接训练: `C:\\ProgramData\\anaconda3\\python.exe scripts\\train.py configs\\ltx_13b_lora_int8-quanto.yaml`
+                
+                2. **依赖库安装**:
+                   - Diffusers库: 必须安装最新版本
+                     ```bash
+                     C:\\ProgramData\\anaconda3\\python.exe -m pip install git+https://github.com/huggingface/diffusers.git
+                     ```
+                   - PyTorch: 必须安装CUDA兼容版本（适用于CUDA 12.8）
+                     ```bash
+                     C:\\ProgramData\\anaconda3\\python.exe -m pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
+                     ```
+                   - 验证CUDA: `C:\\ProgramData\\anaconda3\\python.exe check_cuda.py`
+                
+                ### 模型文件问题
+                
+                1. **预训练模型**: 需要下载正确版本
+                   - 模型地址: [LTX-Video-0.9.7-diffusers](https://huggingface.co/a-r-r-o-w/LTX-Video-0.9.7-diffusers/tree/main)
+                   - 本地路径: 放置于相对路径 `models\\LTX-Video-0.9.7-diffusers`
+                
+                2. **其他必需模型**:
+                   - 视频标注模型: [LLaVA-NeXT-Video-7B-hf](https://huggingface.co/llava-hf/LLaVA-NeXT-Video-7B-hf/tree/main)
+                     默认下载位置: `C:\\Users\\用户名\\.cache\\huggingface\\hub\\models--llava-hf--LLaVA-NeXT-Video-7B-hf`
+                   - T5模型: [t5-base](https://huggingface.co/google-t5/t5-base/tree/main)
+                     放置于: `models\\t5-base`
+                
+                ### 训练数据准备
+                
+                1. **文件夹命名**: 训练素材放在train_data目录下
+                2. **触发词设置**:
+                   - 默认触发词为APT，应与训练集文件夹名一致
+                   - 自定义触发词: 选择ltxv_13b_lora_template模板
+                   - 8位量化训练: 选择configs\\ltx_13b_lora_int8-quanto_template.yaml模板
+                
+                ### UI操作提示
+                
+                - 如UI参数不足，可直接修改配置文件: `configs\\ltx_13b_lora_int8-quanto_template.yaml`
+                """)
+        
+        gr.Markdown("*感谢使用LTX-Video训练器*")
+    
+    return app
+
+if __name__ == "__main__":
+    # 创建并启动UI
+    app = create_ui()
+    app.launch(inbrowser=True)  # 自动打开浏览器

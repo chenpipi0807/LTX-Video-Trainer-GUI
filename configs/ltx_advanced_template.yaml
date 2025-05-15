@@ -1,0 +1,72 @@
+# LTXV LoRA高级配置模板 (支持UI参数调整)
+
+# Model configuration
+model:
+  model_source: "[MODEL_SOURCE]" # 可选: "LTXV_13B_097_DEV", "LTXV_2B_0.9.5", "LTXV_2B_0.9.1", "LTXV_2B_0.9.0"
+  training_mode: "lora" # lora或full
+  load_checkpoint: null # 若要继续训练，填写检查点路径
+
+# LoRA configuration
+lora:
+  rank: [RANK] # LoRA秩
+  alpha: [RANK] # 通常与rank相同
+  dropout: [DROPOUT] # 0.0-0.5之间
+  target_modules:
+    - "to_k"
+    - "to_q"
+    - "to_v"
+    - "to_out.0"
+
+# Optimization configuration
+optimization:
+  learning_rate: [LEARNING_RATE]
+  steps: [STEPS]
+  batch_size: [BATCH_SIZE]
+  gradient_accumulation_steps: [GRAD_ACCUM_STEPS]
+  max_grad_norm: [MAX_GRAD_NORM]
+  optimizer_type: "[OPTIMIZER]" # 可选: "adamw", "adamw8bit", "adamw_bnb_8bit", "adamw_8bit", "lion", "prodigy"
+  scheduler_type: "[SCHEDULER]" # 可选: "constant", "linear", "cosine", "cosine_with_restarts", "polynomial"
+  scheduler_params: {}
+  enable_gradient_checkpointing: [GRAD_CHECKPOINTING]
+  first_frame_conditioning_p: [FIRST_FRAME_COND_P]
+
+# Acceleration optimization
+acceleration:
+  mixed_precision_mode: "[MIXED_PRECISION]" # 可选: "no", "fp16", "bf16"
+  quantization: "[QUANTIZATION]" # 可选: null, "int8", "int8-quanto"
+  load_text_encoder_in_8bit: [TEXT_ENCODER_8BIT]
+  compile_with_inductor: [USE_INDUCTOR]
+  compilation_mode: "[COMPILATION_MODE]" # 可选: "default", "reduce-overhead", "max-autotune"
+
+# Data configuration
+data:
+  preprocessed_data_root: "[BASENAME]_scenes"
+  num_dataloader_workers: [NUM_WORKERS]
+
+# Validation configuration
+validation:
+  prompts:
+    - "[BASENAME] a female character with blonde hair and a blue and white outfit holding a sword"
+    - "[BASENAME] a female character with blonde hair in a fighting stance with a serious expression"
+    - "[BASENAME] a female character wearing a white and blue outfit with gold accents in a room"
+  negative_prompt: "[NEGATIVE_PROMPT]"
+  video_dims: [[WIDTH], [HEIGHT], [FRAMES]]
+  seed: [SEED]
+  inference_steps: [INFERENCE_STEPS]
+  interval: [VALIDATION_INTERVAL]
+  videos_per_prompt: 1
+  guidance_scale: [GUIDANCE_SCALE]
+
+# Checkpoint configuration
+checkpoints:
+  interval: [CHECKPOINT_INTERVAL]
+  keep_last_n: [KEEP_LAST_N]
+
+# Flow matching configuration
+flow_matching:
+  timestep_sampling_mode: "[TIMESTEP_SAMPLING]" # 可选: "uniform", "shifted_logit_normal"
+  timestep_sampling_params: {}
+
+# General configuration
+seed: [SEED]
+output_dir: "outputs/[BASENAME]_lora_r[RANK]_[QUANTIZATION_SUFFIX]"

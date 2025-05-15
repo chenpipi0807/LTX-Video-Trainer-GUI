@@ -1,0 +1,154 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+模型加载器适配器
+为了解决离线模式下的模型加载问题，提供兼容原始API的适配器
+"""
+
+import os
+import sys
+import tempfile
+import torch
+from pathlib import Path
+
+# 检查是否在离线模式运行
+OFFLINE_MODE = os.environ.get("HF_HUB_OFFLINE", "0").lower() in ("1", "true", "yes", "on")
+
+# 使用多个临时文件位置作为标记，防止多进程重复应用适配器
+_ADAPTER_MARKER_FILES = [
+    os.path.join(tempfile.gettempdir(), 'ltxv_adapter_applied.marker'),  # 系统临时目录
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ltxv_adapter_applied.marker'),  # 脚本目录
+    os.path.join(os.getcwd(), 'ltxv_adapter_applied.marker')  # 当前工作目录
+]
+
+# 日志计数器，限制重复消息输出
+_LOG_COUNTER = 0
+_MAX_LOGS = 3  # 最多显示3次相同消息
+
+def create_adapter():
+    """
+    创建模型加载适配器
+    """
+    global _LOG_COUNTER
+    
+    try:
+        from ltxv_trainer.local_model_loader import load_local_components
+        
+        # 创建一个适配函数，匹配原始API的参数
+        def adapter_load_components(
+            model_source=None,
+            *,
+            load_text_encoder_in_8bit=False,
+            transformer_dtype=torch.float32,
+            vae_dtype=torch.bfloat16,
+        ):
+            """
+            适配器函数，将原始API转换为本地API
+            """
+            global _LOG_COUNTER
+            
+            # 限制日志输出次数
+            if _LOG_COUNTER < _MAX_LOGS:
+                print(f"使用本地模型加载器，加载模型: {model_source}")
+                _LOG_COUNTER += 1
+            elif _LOG_COUNTER == _MAX_LOGS:
+                print(f"使用本地模型加载器 (后续相同消息将被抑制)")
+                _LOG_COUNTER += 1
+            
+            # 处理枚举值，转换为对应的实际模型文件路径
+            model_path = None
+            models_dir = Path("models")
+            
+            # 如果model_source是枚举类型，需要找到对应的具体模型文件
+            if model_source == "LTXV_13B_097_DEV":
+                # 查找13B模型文件
+                model_files = list(models_dir.glob("ltxv-13b*.safetensors"))
+                if model_files:
+                    model_path = str(model_files[0])
+                    print(f"找到13B模型文件: {model_path}")
+            elif model_source == "LTXV_2B_095" or model_source is None:
+                # 查找2B模型文件或使用默认模型
+                model_files = list(models_dir.glob("ltx-video-2b*.safetensors"))
+                if model_files:
+                    model_path = str(model_files[0])
+                    print(f"找到2B模型文件: {model_path}")
+            else:
+                # 当作直接路径处理
+                model_path = str(model_source) if model_source else None
+            
+            # 如果找不到模型文件，则设为None，让load_local_components使用默认处理
+            if model_path is None:
+                print("未找到匹配的模型文件，将使用默认模型文件")
+            
+            # 调用本地函数，转换参数
+            return load_local_components(
+                model_path=model_path,
+                load_text_encoder_in_8bit=load_text_encoder_in_8bit,
+                transformer_dtype=transformer_dtype,
+                vae_dtype=vae_dtype,
+            )
+        
+        return adapter_load_components
+        
+    except ImportError as e:
+        print(f"无法导入本地模型加载器: {str(e)}，使用原始加载器")
+        # 如果导入失败，返回None表示使用原始加载器
+        return None
+
+# 应用猴子补丁
+def patch_model_loader():
+    """
+    应用猴子补丁，替换原始加载器
+    """
+    # 检查是否已经应用过适配器
+    adapter_already_applied = False
+    
+    # 检查多个可能的标记文件位置
+    for marker_file in _ADAPTER_MARKER_FILES:
+        if os.path.exists(marker_file):
+            # 读取文件内容以验证是否已成功应用
+            try:
+                with open(marker_file, 'r') as f:
+                    content = f.read().strip()
+                    if content == 'applied':
+                        print(f"检测到适配器已应用(标记文件: {marker_file})")
+                        adapter_already_applied = True
+                        break
+            except Exception:
+                pass  # 如果读取失败，继续检查下一个位置
+    
+    # 如果已经应用过适配器，直接返回
+    if adapter_already_applied:
+        return True
+    
+    if OFFLINE_MODE:
+        try:
+            adapter = create_adapter()
+            if adapter:
+                # 替换原始加载函数
+                from ltxv_trainer import model_loader
+                model_loader.load_ltxv_components = adapter
+                print("成功应用模型加载器适配器")
+                
+                # 尝试在多个位置创建标记文件
+                marker_created = False
+                for marker_file in _ADAPTER_MARKER_FILES:
+                    try:
+                        # 确保目录存在
+                        os.makedirs(os.path.dirname(marker_file), exist_ok=True)
+                        with open(marker_file, 'w') as f:
+                            f.write('applied')
+                        print(f"已创建适配器标记文件: {marker_file}")
+                        marker_created = True
+                    except Exception as e:
+                        print(f"无法在 {marker_file} 创建适配器标记文件: {e}")
+                
+                if not marker_created:
+                    print("警告: 未能在任何位置创建适配器标记文件，下次运行可能会重复应用适配器")
+                
+                return True
+        except Exception as e:
+            print(f"应用适配器时出错: {e}")
+    
+    return False

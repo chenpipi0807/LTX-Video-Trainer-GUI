@@ -1,0 +1,72 @@
+# LTXV LoRA Training Configuration (量化低内存版本)
+
+# Model configuration
+model:
+  model_source: "LTXV_13B_097_DEV" # Options: "LTXV_13B_097_DEV", "LTXV_2B_0.9.5", "LTXV_2B_0.9.1", "LTXV_2B_0.9.0", or a HF repo/local path
+  training_mode: "lora" # Options: "lora" or "full"
+  load_checkpoint: null # Path to checkpoint file or directory to resume from. If directory, latest checkpoint will be used.
+
+# LoRA configuration
+lora:
+  rank: 64
+  alpha: 64
+  dropout: 0.0
+  target_modules:
+    - "to_k"
+    - "to_q"
+    - "to_v"
+    - "to_out.0"
+
+# Optimization configuration
+optimization:
+  learning_rate: 2e-4
+  steps: 200
+  batch_size: 1
+  gradient_accumulation_steps: 4  # 增加到4以减少内存使用
+  max_grad_norm: 1.0
+  optimizer_type: "adamw8bit"  # 使用8位优化器以节省内存
+  scheduler_type: "linear" # Options: "constant", "linear", "cosine", "cosine_with_restarts", "polynomial"
+  scheduler_params: {}
+  enable_gradient_checkpointing: true
+  first_frame_conditioning_p: 0.5
+
+# Acceleration optimization
+acceleration:
+  mixed_precision_mode: "bf16" # Options: "no", "fp16", "bf16"
+  quantization: "int8-quanto"  # 启用8位量化以大幅减少内存使用
+  load_text_encoder_in_8bit: true  # 启用文本编码器8位加载
+  compile_with_inductor: false
+  compilation_mode: "reduce-overhead" # Options: "default", "reduce-overhead", "max-autotune"
+
+# Data configuration
+data:
+  preprocessed_data_root: "APT_scenes"
+  num_dataloader_workers: 4  # 增加数据加载线程数以提高训练速度
+
+# Validation configuration
+validation:
+  prompts:
+    - "[BASENAME] a female character with blonde hair and a blue and white outfit holding a sword"
+    - "[BASENAME] a female character with blonde hair in a fighting stance with a serious expression"
+    - "[BASENAME] a female character wearing a white and blue outfit with gold accents in a room"
+  negative_prompt: "worst quality, inconsistent motion, blurry, jittery, distorted"
+  video_dims: [512, 512, 25] # [width, height, frames]
+  seed: 42
+  inference_steps: 50
+  interval: null  # 禁用验证以节省内存
+  videos_per_prompt: 1
+  guidance_scale: 3.5
+
+# Checkpoint configuration
+checkpoints:
+  interval: 250 # Save a checkpoint every N steps, set to null to disable
+  keep_last_n: -1 # Keep only the N most recent checkpoints, set to -1 to keep all
+
+# Flow matching configuration
+flow_matching:
+  timestep_sampling_mode: "shifted_logit_normal" # Options: "uniform", "shifted_logit_normal"
+  timestep_sampling_params: {}
+
+# General configuration
+seed: 42
+output_dir: "outputs/[BASENAME]_lora_r[RANK]_quantized"  # 添加quantized后缀以区分
