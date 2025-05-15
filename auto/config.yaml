@@ -1,0 +1,120 @@
+acceleration:
+  compilation_mode: default
+  compile_with_inductor: false
+  load_text_encoder_in_8bit: false
+  mixed_precision_mode: fp16
+  quantization: null
+advanced_options:
+  deepspeed_stage: 2
+  memory_efficient_attention: true
+  offload_to_cpu: false
+  text_encoder_learning_rate: 5.0e-05
+  torch_compile: false
+  train_text_encoder: false
+  use_deepspeed: false
+  use_offload: false
+  use_xformers: true
+checkpoints:
+  interval: 50
+  keep_last_n: 1
+data:
+  image_augmentation:
+    color_jitter_p: 0.0
+    enabled: true
+    horizontal_flip_p: 0.0
+    random_crop_p: 0.0
+    random_rotation_p: 0.0
+    vertical_flip_p: 0.0
+  num_dataloader_workers: 0
+  preprocessed_data_root: auto
+  shuffle_batches: true
+flow_matching:
+  timestep_sampling_mode: shifted_logit_normal
+  timestep_sampling_params:
+    logit_mean: 0.0
+    logit_stddev: 2.0
+    max_value: 0.98
+    min_value: 0.02
+lora:
+  alpha: 32
+  dropout: 0.05
+  modules_to_save: []
+  rank: 32
+  target_modules:
+  - to_k
+  - to_q
+  - to_v
+  - to_out.0
+model:
+  load_checkpoint: null
+  model_source: models/sdxl-base-1.0
+  training_mode: lora
+optimization:
+  batch_size: 1
+  enable_gradient_checkpointing: true
+  first_frame_conditioning_p: 0.5
+  gradient_accumulation_steps: 1
+  learning_rate: 0.0002
+  lr_scheduler: cosine
+  lr_warmup_ratio: 0.05
+  lr_warmup_steps: 5
+  max_grad_norm: 1.0
+  min_learning_rate: 1.0e-05
+  optimizer_params:
+    betas:
+    - 0.9
+    - 0.999
+    eps: 1e-8
+    weight_decay: 0.01
+  optimizer_type: adamw
+  scheduler_params: {}
+  scheduler_type: linear
+  steps: 50
+output_dir: auto
+seed: 42
+validation:
+  guidance_scale: 7.5
+  images: null
+  inference_steps: 25
+  interval: 50
+  negative_prompt: worst quality
+  prompts:
+  - In the video, there is a female character who is the main focus. She has long,
+    blonde hair and is wearing a white outfit that is adorned with gold and blue accents.
+    The outfit consists of a white jacket with a high collar and a blue skirt that
+    has a gold belt. The character is standing in a room with a white floor and a
+    white wall in the background. The room appears to be empty, with no other objects
+    or people visible. The character is facing the camera and appears to be in a relaxed
+    posture, with her hands resting at her sides. The lighting in the room is bright
+    and even, suggesting it is daytime. The character's outfit is detailed and appears
+    to be well-fitted, with the gold and blue accents adding a touch of elegance to
+    the otherwise simple white attire. The white color of the outfit contrasts with
+    the gold and blue accents,
+  - In the video, there is a female character with long blonde hair and a side ponytail.
+    She is wearing a white and blue outfit with a high collar and a blue jacket. The
+    character is standing in a room with a blue background and is holding a sword
+    in her right hand. The sword has a golden hilt and a blue blade. The character
+    is also wearing a blue bracelet on her left wrist. She is pointing the sword towards
+    the camera and appears to be in a fighting stance. The room has a blue floor and
+    a blue wall in the background. The character's outfit is detailed and colorful,
+    with a mix of white and blue, and she is the main focus of the video. The sword
+    she is holding is also a significant element in the scene, with its golden hilt
+    and blue blade standing out against the blue background. The room's blue color
+    scheme complements the character's outfit
+  - In the video, there is a female character with long, blonde hair styled in a ponytail.
+    She is wearing a white and blue outfit with a high-necked top and a skirt. The
+    outfit features a detailed design with a blue and white pattern. The character
+    is standing in a room with a blue background, and she is holding a sword in her
+    right hand. The sword is silver with a blue handle and a blue blade. The character
+    is also wearing a pair of gloves, which are blue and white. She is making a gesture
+    with her left hand, pointing towards the sword. The character's expression is
+    serious, and she appears to be in a fighting stance. The room has a blue floor
+    and a blue wall, and there is a blue light shining on the character, giving her
+    a glowing effect. The character's outfit and the sword suggest that she might
+    be a warrior or a f
+  seed: 42
+  video_dims:
+  - 768
+  - 768
+  - 25
+  videos_per_prompt: 1
