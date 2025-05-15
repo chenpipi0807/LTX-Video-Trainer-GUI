@@ -181,9 +181,10 @@ def run_command(cmd, status=None, verbose=True):
     is_preprocess_cmd = "preprocess_zero_workers.py" in cmd_str or "fix_resolution_wrapper.py" in cmd_str
     is_training_cmd = "train.py" in cmd_str
     is_convert_cmd = "convert_checkpoint.py" in cmd_str
+    is_caption_cmd = "caption_videos.py" in cmd_str  # 添加对标注命令的判断
     
     # 对需要实时输出的命令特殊处理
-    need_realtime_output = is_preprocess_cmd or is_training_cmd or is_convert_cmd
+    need_realtime_output = is_preprocess_cmd or is_training_cmd or is_convert_cmd or is_caption_cmd  # 包含标注命令
     
     # 更新状态显示
     status_output = f"运行命令:\n{cmd_str}\n\n请等待..."
