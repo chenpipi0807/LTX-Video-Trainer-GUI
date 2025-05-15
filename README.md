@@ -95,9 +95,9 @@ CUDA版本: 12.8
 
 - **下载地址**: [T5-base](https://huggingface.co/google-t5/t5-base/tree/main)
 - **保存位置**: `models\t5-base\`
-
 ### 4. 模型结构
 
+```
 .\LTX-Video-Trainer-GUI\models
 ├─LTX-Video-0.9.7-diffusers
 │  │  .gitattributes
@@ -147,7 +147,6 @@ CUDA版本: 12.8
         tf_model.h5
         tokenizer.json
         tokenizer_config.json
-
 
 
 ## 准备训练数据
