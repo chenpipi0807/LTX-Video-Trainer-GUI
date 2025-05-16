@@ -43,7 +43,7 @@ from ltxv_trainer.utils import open_image_as_srgb
 
 decord.bridge.set_bridge("torch")
 
-DEFAULT_VLM_CAPTION_INSTRUCTION = "Provide a highly detailed description of the video, including gender, hairstyle, clothing, actions, background, and all visible elements. Do not omit any details."
+DEFAULT_VLM_CAPTION_INSTRUCTION = "Briefly describe this video."
 
 
 class CaptionerType(str, Enum):
@@ -87,7 +87,18 @@ class MediaCaptioningModel(ABC):
         """Read frames from a video file."""
         video_reader = decord.VideoReader(uri=str(video_path))
         total_frames = len(video_reader)
-        indices = list(range(0, total_frames, total_frames // sampling_factor))
+        
+        # 对所有视频都使用首中尾三帧的方法处理，除非视频帧数不足
+        if total_frames < 3:
+            # 视频太短，不足3帧
+            if total_frames == 1:
+                indices = [0]  # 只有1帧
+            else:
+                indices = [0, total_frames-1]  # 首尾两帧
+        else:
+            # 正常情况：取首中尾三帧 - 最经济且有代表性的采样方式
+            indices = [0, total_frames//2, total_frames-1]
+            
         frames = video_reader.get_batch(indices)
         return frames
 
@@ -158,6 +169,10 @@ class TransformersVlmCaptioner(MediaCaptioningModel):
 
         # Read input file
         media = self._read_image(path) if is_image else self._read_video_frames(path, frames_sampling_factor)
+        
+        # 注意: 已在_read_video_frames方法中统一处理了首中尾三帧的选取
+        # 此处不需要额外的帧数限制
+        
         # Prepare inputs
         conversation = [
             {
