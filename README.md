@@ -16,6 +16,9 @@ LTX-Video-Trainer 是一款专业的LTX视频LoRA模型训练工具，支持通�
 
 ![微信截图_20250515133258](https://github.com/user-attachments/assets/287a039b-17bf-4c40-81d5-91007f2b6e17)
 
+![image](https://github.com/user-attachments/assets/c20f502a-9f34-4e38-be77-88d2eb6b80a6)
+
+
 ## 说在前面
 
 - 无论如何，让我们感谢开源精神
