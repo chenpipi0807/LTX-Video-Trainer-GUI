@@ -115,16 +115,12 @@ RESOLUTIONS_DIMS = [
 # 预设帧数列表 - 每个都是24的倍数加1
 FRAME_COUNTS = [
     # 低帧数（推荐，训练速度快，显存需求低）
-    "25",   # 24帧+1, 标准低帧数，社区推荐默认
+    "25",   # 24帧+1, 标准低帧数，社区推荐默认 (CPU模式首选)
     "49",   # 48帧+1, 中等帧数，平衡画质和资源
-    "73",   # 72帧+1, 较高帧数，更流畅的动画
-    
-    # 中等帧数（需要中等显存）
-    "97",   # 96帧+1, 高帧数，高清流畅
-    "121",  # 120帧+1, 非常高的帧数（需要大量显存）
-    "145",  # 144帧+1, 超高帧数，高分辨率视频用
-    
-    # 高帧数（需要大量显存，仅高端显卡）
+    "73",   # 72帧+1, 流畅帧数
+    "97",   # 96帧+1, 高帧数
+    "121",  # 120帧+1, 更流畅的高帧数 (需要GPU支持)
+    "145",  # 144帧+1, 超高帧数，需要大量显存
     "169",  # 168帧+1, 超高帧数，极其流畅
     "193",  # 192帧+1, 超高帧数，高清长视频
     "241"   # 240帧+1, 最高帧数（需要大量显存）
@@ -578,7 +574,11 @@ def extract_dims(dims_string):
     
     return dims_string
 
-def run_pipeline(basename, dims, frames, config_name, rank, split_scenes=True, caption=True, preprocess=True, status=None, only_preprocess=False, add_trigger=True):
+def run_pipeline(basename, dims, frames, config_name, rank, split_scenes=True, caption=True, preprocess=True, status=None, only_preprocess=False, add_trigger=True, caption_method="Moonshot API (推荐，需要API密钥)"):
+    # 全局定义分场景参数，避免变量作用域问题
+    min_scene_length = "3s"   # 使用3秒作为最短场景长度
+    detector_type = "content" # 内容检测器
+    threshold = "15"          # 之前是30，降低到只要差异超过15就分场景
     """运行完整流水线 - 根据选项执行分场景、标注和预处理步骤，然后用train.py训练
     
     Args:
@@ -710,6 +710,36 @@ def run_pipeline(basename, dims, frames, config_name, rank, split_scenes=True, c
                     for orig, new in file_mapping.items():
                         f.write(f"{orig} -> {new}\n")
                 logger.info(f"文件名映射记录已保存到: {mapping_file}")
+                
+            # 重要：检查并更新标注文件中的文件名
+            caption_json = os.path.join(dataset_path, "captions.json")
+            if os.path.exists(caption_json) and file_mapping:
+                try:
+                    logger.info(f"更新标注文件中的文件名: {caption_json}")
+                    with open(caption_json, 'r', encoding='utf-8') as f:
+                        captions_data = json.load(f)
+                    
+                    # 创建新的标注数据
+                    updated_captions = {}
+                    if isinstance(captions_data, dict):
+                        # 标准格式：{filename: caption}
+                        for filename, caption in captions_data.items():
+                            # 获取基本文件名
+                            base_filename = os.path.basename(filename)
+                            # 如果有映射关系，使用新文件名
+                            if base_filename in file_mapping:
+                                updated_captions[file_mapping[base_filename]] = caption
+                                logger.info(f"更新标注文件中的文件名: {base_filename} -> {file_mapping[base_filename]}")
+                            else:
+                                # 如果没有映射关系，保持原样
+                                updated_captions[filename] = caption
+                    
+                    # 写回更新后的标注文件
+                    with open(caption_json, 'w', encoding='utf-8') as f:
+                        json.dump(updated_captions, f, ensure_ascii=False, indent=2)
+                    logger.info(f"标注文件更新完成: {caption_json}")
+                except Exception as e:
+                    logger.warning(f"更新标注文件失败: {str(e)}")
 
             # 正确记录raw_videos的完整路径
             raw_videos = [os.path.join(raw_videos_dir, filename) for filename in file_mapping.values()]
@@ -733,14 +763,21 @@ def run_pipeline(basename, dims, frames, config_name, rank, split_scenes=True, c
             # 直接执行分场景命令，避免使用ProcessPoolExecutor可能导致的死锁
             for video_path in raw_videos:
                 # 确保使用完整路径
+                # 使用更宽松的场景分割参数
+                min_scene_length = "3s"   # 使用3秒作为最短场景长度
+                detector_type = "content" # 内容检测器
+                threshold = "15"          # 之前是30，降低到只要差异超过15就分场景
+                
+                logger.info(f"使用更宽松的场景分割参数: 最短场景={min_scene_length}, 检测器={detector_type}, 阈值={threshold}")
+                
                 cmd = [
                     sys.executable,
                     os.path.join(SCRIPTS_DIR, "split_scenes.py"),
                     video_path,  # 完整路径
                     scenes_dir,
-                    "--filter-shorter-than", "5s",
-                    "--detector", "content",
-                    "--threshold", "30"
+                    "--filter-shorter-than", min_scene_length,
+                    "--detector", detector_type,
+                    "--threshold", threshold
                 ]
                 logger.info(f"执行分场景命令: {' '.join(cmd)}")
                 run_command(cmd, status)  # 添加status参数以显示进度
@@ -779,6 +816,124 @@ def run_pipeline(basename, dims, frames, config_name, rank, split_scenes=True, c
                         status.update(value=f"分场景完成，生成了{len(scene_videos)}个场景视频，并已复制到caption目录")
                 else:
                     logger.info("所有视频文件已存在于caption目录中，无需复制")
+                
+                # ======== 步骤3.1: 调整视频分辨率 ========
+                logger.info("\n=== 步骤3.1: 调整视频分辨率 ===")
+                if hasattr(status, 'update'):
+                    current_status = status.value if hasattr(status, 'value') else ""
+                    status.update(value=current_status + "\n\n=== 步骤3.1: 调整视频分辨率 ===")
+                
+                # 清理分辨率字符串，提取数字部分
+                clean_dims = dims
+                if ']' in clean_dims:
+                    clean_dims = clean_dims.split(']')[-1].strip()
+                
+                # 创建调整分辨率后的目录
+                resized_dir = os.path.join(dataset_path, "caption_resized")
+                os.makedirs(resized_dir, exist_ok=True)
+                
+                # 检查是否已经有调整过大小的视频
+                resized_videos = []
+                for ext in [".mp4", ".avi", ".mov", ".mkv"]:
+                    resized_videos.extend(list(Path(resized_dir).glob(f"*{ext}")))
+                
+                if resized_videos and len(resized_videos) >= len(scene_videos):
+                    logger.info(f"发现{len(resized_videos)}个调整过分辨率的视频文件，跳过分辨率调整步骤")
+                    if hasattr(status, 'update'):
+                        current_status = status.value if hasattr(status, 'value') else ""
+                        status.update(value=current_status + f"\n使用现有的{len(resized_videos)}个调整过分辨率的视频")
+                else:
+                    # 执行分辨率调整
+                    logger.info(f"开始调整视频分辨率至 {clean_dims}")
+                    if hasattr(status, 'update'):
+                        current_status = status.value if hasattr(status, 'value') else ""
+                        status.update(value=current_status + f"\n开始调整视频分辨率至 {clean_dims}...")
+                    
+                    resize_cmd = [
+                        sys.executable,
+                        os.path.join(SCRIPTS_DIR, "resize_videos.py"),
+                        caption_dir,
+                        "--output-dir", resized_dir,
+                        "--target-size", clean_dims,
+                        "--keep-aspect-ratio"
+                    ]
+                    
+                    logger.info(f"执行分辨率调整命令: {' '.join(resize_cmd)}")
+                    resize_output = run_command(resize_cmd, status)
+                    
+                    # 检查是否成功
+                    resized_videos = []
+                    for ext in [".mp4", ".avi", ".mov", ".mkv"]:
+                        resized_videos.extend(list(Path(resized_dir).glob(f"*{ext}")))
+                    
+                    if resized_videos:
+                        logger.info(f"分辨率调整完成，生成了{len(resized_videos)}个调整后的视频")
+                        if hasattr(status, 'update'):
+                            current_status = status.value if hasattr(status, 'value') else ""
+                            status.update(value=current_status + f"\n分辨率调整完成，生成了{len(resized_videos)}个调整后的视频")
+                    else:
+                        logger.error("分辨率调整失败，未生成视频文件")
+                        if hasattr(status, 'update'):
+                            current_status = status.value if hasattr(status, 'value') else ""
+                            status.update(value=current_status + "\n错误: 分辨率调整失败，将使用原始视频继续")
+                        # 如果调整失败，使用原始视频目录
+                        resized_dir = caption_dir
+                
+                # ======== 步骤3.2: 提取视频帧 ========
+                logger.info("\n=== 步骤3.2: 提取视频帧 ===")
+                if hasattr(status, 'update'):
+                    current_status = status.value if hasattr(status, 'value') else ""
+                    status.update(value=current_status + "\n\n=== 步骤3.2: 提取视频帧 ===")
+                
+                # 创建帧提取目录
+                frames_dir = os.path.join(dataset_path, "frames")
+                os.makedirs(frames_dir, exist_ok=True)
+                
+                # 检查是否已有提取的帧
+                existing_frame_dirs = [d for d in os.listdir(frames_dir) if os.path.isdir(os.path.join(frames_dir, d))]
+                if existing_frame_dirs and len(existing_frame_dirs) >= len(resized_videos):
+                    logger.info(f"发现{len(existing_frame_dirs)}个视频已提取帧，跳过帧提取步骤")
+                    if hasattr(status, 'update'):
+                        current_status = status.value if hasattr(status, 'value') else ""
+                        status.update(value=current_status + f"\n使用现有的{len(existing_frame_dirs)}个视频帧目录")
+                else:
+                    # 执行帧提取
+                    frames_count = int(frames)  # 转换为整数
+                    logger.info(f"开始从每个视频提取{frames_count}帧")
+                    if hasattr(status, 'update'):
+                        current_status = status.value if hasattr(status, 'value') else ""
+                        status.update(value=current_status + f"\n开始从每个视频提取{frames_count}帧...")
+                    
+                    extract_cmd = [
+                        sys.executable,
+                        os.path.join(SCRIPTS_DIR, "extract_frames.py"),
+                        resized_dir,  # 从调整分辨率后的目录提取帧
+                        "--output-dir", frames_dir,
+                        "--num-frames", str(frames_count),
+                        "--mode", "uniform"
+                    ]
+                    
+                    logger.info(f"执行帧提取命令: {' '.join(extract_cmd)}")
+                    extract_output = run_command(extract_cmd, status)
+                    
+                    # 检查是否成功
+                    existing_frame_dirs = [d for d in os.listdir(frames_dir) if os.path.isdir(os.path.join(frames_dir, d))]
+                    if existing_frame_dirs:
+                        logger.info(f"帧提取完成，生成了{len(existing_frame_dirs)}个视频帧目录")
+                        if hasattr(status, 'update'):
+                            current_status = status.value if hasattr(status, 'value') else ""
+                            status.update(value=current_status + f"\n帧提取完成，生成了{len(existing_frame_dirs)}个视频帧目录")
+                    else:
+                        logger.error("帧提取失败，未生成帧目录")
+                        if hasattr(status, 'update'):
+                            current_status = status.value if hasattr(status, 'value') else ""
+                            status.update(value=current_status + "\n错误: 帧提取失败，将使用调整后的视频继续标注")
+                        # 继续使用调整后的视频目录
+                        # 不需要额外操作，因为标注脚本仍将使用resized_dir中的视频
+                
+                # 使用调整分辨率后的目录做为标注的输入目录
+                caption_input_dir = resized_dir
+                logger.info(f"将使用{caption_input_dir}目录中的调整分辨率后的视频文件进行标注")
                     
         else:
             if not raw_videos:
@@ -922,19 +1077,93 @@ def run_pipeline(basename, dims, frames, config_name, rank, split_scenes=True, c
             for ext in [".mp4", ".avi", ".mov", ".mkv"]:
                 raw_videos.extend(list(Path(raw_videos_dir).glob(f"*{ext}")))
                 
-        # 优先级：caption_dir > scenes_dir > raw_videos_dir > dataset_path
-        if caption_videos:
+        # 优先用调整过分辨率的视频目录，如果存在
+        resized_dir = os.path.join(dataset_path, "caption_resized")
+        resized_videos = []
+        if os.path.exists(resized_dir):
+            for ext in [".mp4", ".avi", ".mov", ".mkv"]:
+                resized_videos.extend(list(Path(resized_dir).glob(f"*{ext}")))
+        
+        # 优先级，第一优先级始终是调整分辨率后的视频目录
+        # 如果resized_dir不存在或没有视频，尝试自动创建并调整视频分辨率
+        if not resized_videos and (caption_videos or scene_videos or raw_videos):
+            # 尝试创建resized目录并调整视频分辨率
+            logger.info("未找到调整分辨率后的视频，尝试自动创建")
+            os.makedirs(resized_dir, exist_ok=True)
+            
+            # 确定源视频目录
+            source_videos = []
+            source_dir = None
+            if caption_videos:
+                source_videos = caption_videos
+                source_dir = caption_dir
+                logger.info("使用caption目录中的视频进行分辨率调整")
+            elif scene_videos:
+                source_videos = scene_videos
+                source_dir = scenes_dir
+                logger.info("使用scenes目录中的视频进行分辨率调整")
+            elif raw_videos:
+                source_videos = raw_videos
+                source_dir = raw_videos_dir
+                logger.info("使用raw_videos目录中的视频进行分辨率调整")
+            
+            if source_dir and source_videos:
+                # 获取目标分辨率
+                width, height = extract_dims(dims).split('x')
+                logger.info(f"开始调整视频分辨率至 {width}x{height}")
+                
+                # 调用FFmpeg调整视频分辨率
+                for video_file in source_videos:
+                    video_filename = os.path.basename(str(video_file))
+                    output_path = os.path.join(resized_dir, video_filename)
+                    
+                    if not os.path.exists(output_path):
+                        resize_cmd = [
+                            "ffmpeg",
+                            "-i", str(video_file),
+                            "-vf", f"scale={width}:{height}",
+                            "-c:v", "libx264",
+                            "-preset", "fast",
+                            "-crf", "23",
+                            "-c:a", "aac",
+                            "-y",
+                            output_path
+                        ]
+                        
+                        try:
+                            logger.info(f"调整视频分辨率: {video_filename}")
+                            if hasattr(status, 'update'):
+                                current_status = status.value if hasattr(status, 'value') else ""
+                                status.update(value=current_status + f"\n正在调整视频分辨率: {video_filename}")
+                            
+                            subprocess.run(resize_cmd, check=True, capture_output=True)
+                            logger.info(f"成功调整视频分辨率: {video_filename}")
+                        except Exception as e:
+                            logger.error(f"调整视频分辨率失败: {video_filename} - {str(e)}")
+                
+                # 检查是否成功创建了调整分辨率的视频
+                for ext in [".mp4", ".avi", ".mov", ".mkv"]:
+                    resized_videos.extend(list(Path(resized_dir).glob(f"*{ext}")))
+        
+        # 选择最终的输入目录，优先使用调整后的目录
+        if resized_videos:
+            input_dir = resized_dir
+            logger.info(f"将使用调整分辨率后的视频目录进行标注 ({len(resized_videos)}个视频)")
+            if hasattr(status, 'update'):
+                current_status = status.value if hasattr(status, 'value') else ""
+                status.update(value=current_status + f"\n使用调整分辨率后的视频进行标注 ({len(resized_videos)}个视频)")
+        elif caption_videos:
             input_dir = caption_dir
-            logger.info(f"将使用caption目录中的视频文件进行标注")
+            logger.info(f"警告: 使用caption目录中的视频文件进行标注，未找到调整分辨率后的视频")
         elif scene_videos:
             input_dir = scenes_dir
-            logger.warning(f"注意: 使用scenes目录中的视频文件进行标注，这可能会导致路径不匹配")
+            logger.warning(f"警告: 使用scenes目录中的视频文件进行标注，未找到调整分辨率后的视频，这可能会导致路径不匹配")
         elif raw_videos:
             input_dir = raw_videos_dir
-            logger.warning(f"注意: 使用raw_videos目录中的原始视频进行标注")
+            logger.warning(f"警告: 使用raw_videos目录中的原始视频进行标注，未找到调整分辨率后的视频")
         else:
             input_dir = dataset_path
-            logger.warning(f"注意: 使用数据集根目录进行标注，这可能不是预期的行为")
+            logger.warning(f"警告: 使用数据集根目录进行标注，未找到任何可用视频，这可能不是预期的行为")
             
         logger.info(f"将使用{input_dir}目录中的视频文件进行标注")
         
@@ -958,15 +1187,66 @@ def run_pipeline(basename, dims, frames, config_name, rank, split_scenes=True, c
         
         logger.info(f"在{input_dir}目录中找到{len(video_files_in_input)}个视频文件")
         
-        caption_cmd = [
-            sys.executable,
-            os.path.join(SCRIPTS_DIR, "caption_videos.py"),
-            input_dir,  # 使用选定的输入目录
-            "--output", output_json,
-            "--captioner-type", "llava_next_7b"
-        ]
+        # 根据用户选择的标注方式决定使用哪个标注脚本
+        use_moonshot = "Moonshot API" in caption_method
         
-        logger.info(f"执行标注命令: {' '.join(caption_cmd)}")
+        if use_moonshot:
+            # 使用Moonshot API进行标注
+            logger.info(f"使用Moonshot API进行视频标注...")
+            if hasattr(status, 'update'):
+                current_status = status.value if hasattr(status, 'value') else ""
+                status.update(value=current_status + "\
+正在使用Moonshot API进行视频标注...")
+            
+            # 检查API密钥文件是否存在
+            api_key_file = os.path.join(PROJECT_DIR, "api_key.txt")
+            if not os.path.exists(api_key_file):
+                # 如果API密钥文件不存在，创建一个提示用户输入的文件
+                with open(api_key_file, 'w', encoding='utf-8') as f:
+                    f.write("# 请将您的Moonshot API密钥粘贴在下面一行，然后保存文件\n")
+                    f.write("sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n")
+                    f.write("# 请到 https://platform.moonshot.cn/docs/pricing/chat 申请API密钥\n")
+                error_msg = f"未找到API密钥文件。已创建模板文件: {api_key_file}\n请在此文件中输入您的Moonshot API密钥并再次运行标注。"
+                if hasattr(status, 'update'):
+                    status.update(value=error_msg)
+                logger.error(error_msg)
+                return error_msg
+            
+            # 使用Moonshot API标注脚本
+            caption_cmd = [
+                sys.executable,
+                os.path.join(SCRIPTS_DIR, "caption_with_moonshot.py"),
+                input_dir,  # 使用选定的输入目录
+                "--output", output_json
+            ]
+        else:
+            # 使用本地LLaVA模型进行标注
+            logger.info(f"使用本地LLaVA模型进行视频标注...")
+            if hasattr(status, 'update'):
+                current_status = status.value if hasattr(status, 'value') else ""
+                status.update(value=current_status + "\
+正在使用本地LLaVA模型进行视频标注...")
+                
+            # 检查是否有CUDA支持
+            if not torch.cuda.is_available():
+                warning_msg = "\n警告: 检测到您的PyTorch没有CUDA支持，本地模型标注可能非常缓慢。建议安装CUDA支持的PyTorch或切换到Moonshot API标注。"
+                logger.warning(warning_msg)
+                if hasattr(status, 'update'):
+                    current_status = status.value if hasattr(status, 'value') else ""
+                    status.update(value=current_status + warning_msg)
+            
+            # 使用本地LLaVA模型标注脚本
+            caption_cmd = [
+                sys.executable,
+                os.path.join(SCRIPTS_DIR, "caption_videos.py"),
+                input_dir,  # 使用选定的输入目录
+                "--output", output_json,
+                "--captioner-type", "llava_next_7b"  # 使用默认的LLaVA-NeXT-7B模型
+            ]
+        
+        # 根据选择的标注方法显示相应的命令日志
+        method_name = "Moonshot API" if use_moonshot else "本地LLaVA模型"
+        logger.info(f"执行 {method_name} 标注命令: {' '.join(caption_cmd)}")
         caption_output = run_command(caption_cmd, status)
         
         # 检查标注是否成功
@@ -2232,6 +2512,28 @@ def create_ui():
                             pipeline_caption = gr.Checkbox(label="标注视频", value=True, info="是否自动为视频生成描述文本")
                             pipeline_preprocess = gr.Checkbox(label="预处理", value=True, info="必须执行，生成训练所需的潜在表示和文本嵌入")
                         
+                        # 添加标注方法选择
+                        pipeline_caption_method = gr.Radio(
+                            label="标注方法", 
+                            choices=["Moonshot API (推荐，需要API密钥)", "本地LLaVA模型 (需要GPU配置)"], 
+                            value="Moonshot API (推荐，需要API密钥)",
+                            visible=True,
+                            info="选择视频标注方法，Moonshot API速度更快且质量更高"
+                        )
+                        
+                        # 添加API密钥说明
+                        with gr.Accordion("⋯ Moonshot API密钥说明", open=False):
+                            gr.Markdown("""
+                            **如何设置API密钥：**
+                            1. API密钥文件路径：`.\api_key.txt`
+                            2. 如果文件不存在，系统会自动创建模板文件
+                            3. 将您的Moonshot API密钥(以sk-开头)添加到文件中并保存
+                            4. 访问 [Moonshot官网](https://platform.moonshot.cn/) 申请API密钥
+                            """)
+                        
+                        with gr.Row():
+                            torch_status_pipeline = gr.Markdown(f"**PyTorch状态**: {'CUDA可用✓' if torch.cuda.is_available() else '⚠️ CUDA不可用，建议使用Moonshot API'}")
+                        
                         pipeline_config = gr.Dropdown(label="配置模板", choices=list(CONFIG_FILES.keys()))
                         pipeline_rank = gr.Slider(label="LoRA秩 (Rank)", minimum=1, maximum=128, value=64)
                         pipeline_button = gr.Button("开始一键训练", variant="primary")
@@ -2242,8 +2544,26 @@ def create_ui():
                 def get_config_file(config_name):
                     return CONFIG_FILES.get(config_name)
                 
+                # 定义一个包装函数，处理默认参数
+                def run_pipeline_with_defaults(basename, dims, frames, config_name, rank, split_scenes, caption, preprocess, status, caption_method):
+                    # 传递默认参数和标注方法
+                    return run_pipeline(
+                        basename=basename,
+                        dims=dims,
+                        frames=frames,
+                        config_name=config_name,
+                        rank=rank,
+                        split_scenes=split_scenes,
+                        caption=caption,
+                        preprocess=preprocess,
+                        status=status,
+                        only_preprocess=False,  # 这里使用固定值
+                        add_trigger=True,       # 使用固定值
+                        caption_method=caption_method  # 使用传递进来的参数
+                    )
+                
                 pipeline_button.click(
-                    fn=run_pipeline,
+                    fn=run_pipeline_with_defaults,
                     inputs=[
                         pipeline_basename, 
                         pipeline_dims, 
@@ -2253,7 +2573,8 @@ def create_ui():
                         pipeline_split_scenes,
                         pipeline_caption,
                         pipeline_preprocess,
-                        pipeline_status
+                        pipeline_status,
+                        pipeline_caption_method  # 添加标注方法参数
                     ],
                     outputs=pipeline_status
                 )
@@ -2282,7 +2603,18 @@ def create_ui():
                                     preprocess_caption = gr.Checkbox(label="标注视频", value=True, info="是否自动为视频生成描述文本")
                                     preprocess_add_trigger = gr.Checkbox(label="添加触发词", value=True, info="自动在标注中添加项目触发词")
                                 
-                                preprocess_only_button = gr.Button("开始数据预处理", variant="primary")
+                                # 添加标注方法选择
+                                caption_method = gr.Radio(
+                                    label="标注方法", 
+                                    choices=["Moonshot API (推荐，需要API密钥)", "本地LLaVA模型 (需要GPU配置)"], 
+                                    value="Moonshot API (推荐，需要API密钥)",
+                                    visible=True,
+                                    info="选择视频标注方法，Moonshot API速度更快且质量更高，但需要API密钥；本地模型不需要联网，但需要GPU支持"
+                                )
+                                
+                                with gr.Row():
+                                    torch_status = gr.Markdown(f"**PyTorch状态**: {'CUDA可用✓' if torch.cuda.is_available() else '⚠️ CUDA不可用，建议使用Moonshot API'}")
+                                    preprocess_only_button = gr.Button("开始数据预处理", variant="primary")
                             
                             with gr.Column():
                                 preprocess_status = gr.Textbox(label="状态", lines=20)
@@ -2299,7 +2631,7 @@ def create_ui():
                         """)
                         
                         # 使用run_pipeline函数但只执行预处理步骤
-                        def run_preprocess_only(basename, dims, frames, split_scenes, caption, add_trigger, status):
+                        def run_preprocess_only(basename, dims, frames, split_scenes, caption, add_trigger, caption_method, status):
                             # 调用run_pipeline函数但不执行训练步骤
                             # 注意这里传空的config_name和0的rank，表示不进行训练
                             result = run_pipeline(
@@ -2313,7 +2645,8 @@ def create_ui():
                                 preprocess=True,  # 预处理始终要执行
                                 status=status,
                                 only_preprocess=True,  # 标记只执行预处理
-                                add_trigger=add_trigger  # 是否添加触发词
+                                add_trigger=add_trigger,  # 是否添加触发词
+                                caption_method=caption_method  # 标注方法
                             )
                             return result
                         
@@ -2326,6 +2659,7 @@ def create_ui():
                                 preprocess_split_scenes,
                                 preprocess_caption,
                                 preprocess_add_trigger,
+                                caption_method,  # 新增标注方法参数
                                 preprocess_status
                             ],
                             outputs=preprocess_status

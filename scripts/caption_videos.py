@@ -109,9 +109,13 @@ def caption_media(
 
     console.print(f"Found [bold]{len(media_files)}[/] media files to process.")
 
-    # Get the base directory for relative paths (the directory containing the output file)
-    base_dir = output_path.parent.resolve()
-    console.print(f"Using [bold blue]{base_dir}[/] as base directory for relative paths")
+    # Get the base directory for relative paths (use the input directory for correct path references)
+    base_dir = input_path.resolve() if input_path.is_dir() else input_path.parent.resolve()
+    console.print(f"Using [bold blue]{base_dir}[/] as base directory for relative paths (input directory)")
+    
+    # 记录输出目录用于调试
+    output_dir = output_path.parent.resolve()
+    console.print(f"Output will be saved to directory: [bold green]{output_dir}[/]")
 
     # Load existing captions if the output file exists
     existing_captions = _load_existing_captions(output_path, output_format)
