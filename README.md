@@ -24,6 +24,14 @@ LTX-Video-Trainer 是一款专业的LTX视频LoRA模型训练工具，支持通�
 - 维护频率，工作原因，不会很高
 - 安装问题，欢迎提交issue，我看到会回复
 
+## 更新日志
+
+- 新增了本地cuda环境的检查
+- 新增了通过KIMI进行视频描述推理的进阶方案
+
+![image](https://github.com/user-attachments/assets/51cece61-c533-44d0-8de7-6d18c32f2ac4)
+
+
 
 ## 环境要求
 
