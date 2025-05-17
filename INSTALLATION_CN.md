@@ -346,3 +346,10 @@ python download_models.py
   C:\ProgramData\anaconda3\python.exe scripts\minimal_ui.py
   ```
 
+
+### 说在最后
+
+-写这个的时候是用的家里的3060，最后测试意外发现，我的老头乐显卡竟然能跑动的~
+
+![bebaa70dd5037d5d266cba8661ac820](https://github.com/user-attachments/assets/b8e8b3c7-96fc-4425-ad20-de119ca13d86)
+
