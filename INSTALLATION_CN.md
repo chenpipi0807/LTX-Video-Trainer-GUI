@@ -11,15 +11,26 @@ cd LTX-Video-Trainer-GUI
 
 执行成功后，你将在当前目录下看到项目文件夹。
 
-## 步骤2：查看python版本
-C:\ProgramData\anaconda3\python.exe --version（有anaconda3的运行这个，更推荐）
-没有anaconda3的运行python --version 
+## 步骤2：安装正确的Python版本
 
-我这里显示：
-PS C:\LTX-Video-Trainer-GUI> python --version
-Python 3.13.3
+**重要提示：** 项目需要使用Python 3.12.x版本，在Python 3.13.x上安装SentencePiece库会出现编译问题。
 
-虽然项目推荐Python 3.12，但我们先尝试使用Python 3.13.3完成安装，如果遇到兼容性问题再考虑降级。
+如果已安装Python 3.13.x，建议卸载并安装Python 3.12.3（最新稳定版）：
+
+1. 卸载Python 3.13.x：通过控制面板或原安装程序卸载
+2. 下载Python 3.12.3：从[Python官方下载页面](https://www.python.org/downloads/windows/)下载
+3. 安装时勾选"Add Python 3.12 to PATH"选项
+
+安装完成后验证版本：
+
+```powershell
+python --version
+```
+
+显示结果：
+```
+Python 3.12.3
+```
 
 ## 步骤3：检查CUDA环境
 
@@ -67,8 +78,8 @@ pip install PyYAML
 输出结果：
 ```
 Collecting PyYAML
-  Downloading PyYAML-6.0.2-cp313-cp313-win_amd64.whl.metadata (2.1 kB)
-Downloading PyYAML-6.0.2-cp313-cp313-win_amd64.whl (156 kB)
+  Downloading PyYAML-6.0.2-cp312-cp312-win_amd64.whl.metadata (2.1 kB)
+Downloading PyYAML-6.0.2-cp312-cp312-win_amd64.whl (156 kB)
 Installing collected packages: PyYAML
 Successfully installed PyYAML-6.0.2
 ```
@@ -76,10 +87,23 @@ Successfully installed PyYAML-6.0.2
 接下来安装其他必要的包：
 
 ```powershell
-pip install gradio rich typer pillow numpy opencv-python einops moviepy sentencepiece
+pip install gradio rich typer pillow numpy opencv-python einops moviepy
 ```
 
-安装结果：成功安装了所有UI相关和基础库。
+### 安装SentencePiece库（必需）
+
+**特别注意：** SentencePiece库是指定项目使用T5模型的必要依赖，在Python 3.12上可以直接安装：
+
+```powershell
+pip install sentencepiece
+```
+
+安装结果：
+```
+Requirement already satisfied: sentencepiece in c:\users\pip\appdata\local\programs\python\python312\lib\site-packages (0.2.0)
+```
+
+确认安装成功后我们才能继续下一步。这是安装过程中最重要的一步，如果在Python 3.13版本上能会导致编译错误。
 
 ## 步骤6：安装PyTorch和Diffusers
 
