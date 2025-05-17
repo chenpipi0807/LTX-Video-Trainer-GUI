@@ -1,31 +1,18 @@
 # LTX-Video-Trainer 依赖清单
 # 作者：pipchen
-# 日期：2025-05-13
+# 日期：2025-05-17（更新）
 
 #################################################
 # 核心环境要求
 #################################################
-# Python 3.12 (Anaconda3 环境)
+# Python 3.12 或 3.13 (Anaconda3 环境或标准Python环境均可)
 
 #################################################
 # PyTorch与CUDA依赖 (必须使用nightly构建版本)
 #################################################
---find-links https://download.pytorch.org/whl/nightly/cu128/torch_nightly.html
-torch>=2.8.0.dev  # 必须是支持CUDA 12.8的夜间构建版本
+torch>=2.8.0.dev  # 支持CUDA 12.6或12.8的夜间构建版本均可
 torchvision>=0.22.0.dev  # 配套版本
-torchaudio>=2.8.0.dev  # 配套版本
-
-# 推荐安装命令:
-# python -m pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
-
-#################################################
-# Diffusers库 (必须使用最新版本)
-#################################################
-git+https://github.com/huggingface/diffusers.git  # 必须使用最新的git版本，官方发布版不支持某些VAE功能
-
-#################################################
-# 优化器和量化依赖
-#################################################
+torchaudio>=2.6.0.dev  # 配套版本
 bitsandbytes>=0.41.0  # 用于8位优化器和量化
 transformers>=4.38.0  # Hugging Face Transformers库
 accelerate>=0.30.0  # 分布式训练和混合精度支持
@@ -35,7 +22,7 @@ safetensors>=0.4.1  # 安全模型权重存储
 # UI相关依赖
 #################################################
 gradio>=4.19.0  # UI界面
-pyyaml>=6.0.1  # YAML配置文件处理
+pyyaml>=6.0.1  # YAML配置文件处理 (安装时使用PyYAML包名)
 rich>=13.7.0  # 终端富文本显示
 typer>=0.9.0  # 命令行参数处理
 
