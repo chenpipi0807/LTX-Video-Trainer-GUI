@@ -144,6 +144,9 @@ python scripts\minimal_ui.py
 
 ### 使用下载脚本（推荐）
 
+![微信截图_20250517184601](https://github.com/user-attachments/assets/26f48914-c604-4e56-bc7e-7577233597cb)
+
+
 为了简化模型下载流程，我创建了一个下载脚本：
 
 ```powershell
