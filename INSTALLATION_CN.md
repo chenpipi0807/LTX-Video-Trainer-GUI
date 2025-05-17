@@ -55,7 +55,7 @@ nvidia-smi
 +-----------------------------------------+------------------------+----------------------+
 ```
 
-**注意：** 写这个文档时候家里电脑CUDA版本为12.6，当然项目推荐CUDA 12.8。我们依然尝试安装CUDA 12.8兼容的PyTorch，但可能需要根据实际情况调整。
+**注意：** 当前系统CUDA版本为12.6，而项目推荐CUDA 12.8。我们将尝试安装CUDA 12.8兼容的PyTorch，但可能需要根据实际情况调整。
 
 ## 步骤4：安装PyTorch和CUDA支持
 
@@ -105,7 +105,18 @@ Requirement already satisfied: sentencepiece in c:\users\pip\appdata\local\progr
 
 确认安装成功后我们才能继续下一步。这是安装过程中最重要的一步，如果在Python 3.13版本上能会导致编译错误。
 
-## 步骤6：安装PyTorch和Diffusers
+## 步骤6：简化安装方式
+
+现在可以通过以下命令一次性安装所有依赖:
+
+```powershell
+pip install -r requirements.txt
+```
+
+对于特定需要从 GitHub 安装的库（如 diffusers），可以根据以下指导单独执行相应命令。
+
+
+## 安装PyTorch和Diffusers
 
 现在我们需要安装核心的PyTorch（支持CUDA）和Diffusers库，这些是项目运行的关键组件。
 
@@ -130,6 +141,111 @@ pip install git+https://github.com/huggingface/diffusers.git
 ```
 Successfully installed diffusers-0.34.0.dev0 regex-2024.11.6 safetensors-0.5.3
 ```
+
+### 安装Transformers库（必需）
+
+```powershell
+pip install transformers
+```
+
+安装结果：
+```
+Successfully installed tokenizers-0.21.1 transformers-4.51.3
+```
+
+**注意：** Transformers库是预处理视频和图像的必要组件，缺少它会导致预处理脚本失败。
+
+### 安装Loguru库（必需）
+
+```powershell
+pip install loguru
+```
+
+安装结果：
+```
+Successfully installed loguru-0.7.3 win32-setctime-1.2.0
+```
+
+**注意：** Loguru是项目使用的日志库，不安装此库会导致预处理脚本启动失败。
+
+### 安装pillow-heif库（必需）
+
+```powershell
+pip install pillow-heif
+```
+
+安装结果：
+```
+Successfully installed pillow-heif-0.22.0
+```
+
+**注意：** pillow-heif库用于处理HEIF格式图像，预处理脚本依赖于这个库。
+
+### 安装decord库（必需）
+
+```powershell
+pip install decord
+```
+
+安装结果：
+```
+Successfully installed decord-0.6.0
+```
+
+**注意：** decord是一个高效的视频处理库，在预处理和训练过程中用于视频解码。
+
+### 安装optimum和optimum-quanto库（必需）
+
+```powershell
+pip install optimum optimum-quanto
+```
+
+安装结果：
+```
+Successfully installed optimum-1.25.3
+Successfully installed ninja-1.11.1.4 optimum-quanto-0.2.7
+```
+
+**注意：** optimum和optimum-quanto库用于模型量化和优化，在训练过程中必不可少。
+
+### 安装accelerate库（必需）
+
+```powershell
+pip install accelerate
+```
+
+安装结果：
+```
+Successfully installed accelerate-1.7.0 psutil-7.0.0
+```
+
+**注意：** accelerate库是用于分布式训练和混合精度训练的工具，训练脚本使用它来加速训练过程。
+
+### 安装peft库（必需）
+
+```powershell
+pip install peft
+```
+
+安装结果：
+```
+Successfully installed peft-0.15.2
+```
+
+**注意：** peft库是用于参数高效微调（Parameter-Efficient Fine-Tuning）的库，它允许使用LoRA等技术微调大模型而只更新少量参数。
+
+### 安装bitsandbytes库（必需）
+
+```powershell
+pip install -U bitsandbytes
+```
+
+安装结果：
+```
+Successfully installed bitsandbytes-0.45.5
+```
+
+**注意：** bitsandbytes库是用于模型量化的工具，视频训练过程中使用8位量化时必须安装该库。
 
 ## 步骤7：验证安装
 
@@ -229,3 +345,4 @@ python download_models.py
   ```powershell
   C:\ProgramData\anaconda3\python.exe scripts\minimal_ui.py
   ```
+
