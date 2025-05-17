@@ -21,3 +21,6 @@ Write-Host "正在启动界面..." -ForegroundColor Green
 
 # 程序结束
 Write-Host "界面已关闭" -ForegroundColor Cyan
+
+# 暂停显示结果，等待用户按任意键关闭
+Pause
