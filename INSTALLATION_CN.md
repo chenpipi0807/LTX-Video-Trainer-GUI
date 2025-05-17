@@ -76,7 +76,7 @@ Successfully installed PyYAML-6.0.2
 接下来安装其他必要的包：
 
 ```powershell
-pip install gradio rich typer pillow numpy opencv-python einops moviepy
+pip install gradio rich typer pillow numpy opencv-python einops moviepy sentencepiece
 ```
 
 安装结果：成功安装了所有UI相关和基础库。
@@ -174,7 +174,7 @@ python download_models.py
 - 默认保存位置：`C:\Users\[用户名]\.cache\huggingface\hub\models--llava-hf--LLaVA-NeXT-Video-7B-hf\snapshots\[哈希值]`
 - 注意：此路径因用户而异，使用脚本下载时会自动选择适当路径
 
-### 3. T5-base (可选)
+### 3. T5-base (必需)
 
 - 下载地址：[T5-base](https://huggingface.co/google-t5/t5-base/tree/main)
 - 保存位置：`models\t5-base`
