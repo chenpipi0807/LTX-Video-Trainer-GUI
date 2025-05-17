@@ -172,7 +172,7 @@ def get_video_caption(api_key, frame_paths):
             # 添加文本提示
             message_content.append({
                 "type": "text",
-                "text": "Create a short English caption for these video frames. Describe what is happening in the video in a brief sentence. Focus on the content and action shown in these frames. Be direct and clear."
+                "text": "Create a detailed English caption for these video frames. Describe what is happening in the video, including all important subjects, actions, and visual elements. Provide context about the setting and atmosphere. Aim for a comprehensive description in 2-3 sentences."
             })
             
             # 完整请求数据
@@ -181,7 +181,7 @@ def get_video_caption(api_key, frame_paths):
                 "messages": [
                     {
                         "role": "system",
-                        "content": "You are a professional video content describer. Create short, descriptive English captions for videos that accurately describe what is happening."
+                        "content": "You are a professional video content describer. Create detailed, descriptive English captions for videos. Your descriptions should be comprehensive, covering all important visual elements, actions, and context in 2-3 sentences."
                     },
                     {
                         "role": "user",
@@ -189,7 +189,7 @@ def get_video_caption(api_key, frame_paths):
                     }
                 ],
                 "temperature": 0.7,
-                "max_tokens": 60
+                "max_tokens": 200
             }
             
             # 只用于显示的调试信息 - 不影响实际发送的请求
@@ -227,8 +227,81 @@ def get_video_caption(api_key, frame_paths):
                     # 检查响应是否有效
                     if "choices" in result and len(result["choices"]) > 0:
                         caption = result["choices"][0]["message"]["content"].strip()
-                        console.print(f"[bold green]成功! 生成标题: {caption}[/]")
+                        
+                        import re
+                        # 处理任何格式的API响应，将其转换为单行简洁描述
+                        # 显示原始响应（仅调试用）
+                        if len(caption) > 100:
+                            console.print(f"[bold yellow]原始标题: {caption[:100]}...[/]")
+                        else:
+                            console.print(f"[bold yellow]原始标题: {caption}[/]")
+                        
+                        # 1. 处理多行格式，保留尽可能多的内容
+                        if '\n' in caption:
+                            # 将所有行提取出来
+                            lines = [line.strip() for line in caption.split('\n') if line.strip()]
+                            
+                            # 从每行移除编号和引号
+                            clean_lines = []
+                            for line in lines:
+                                # 移除常见的编号格式 "1. ", "2) ", "- " 等
+                                line = re.sub(r'^\d+[\.\)\:]\s*', '', line)
+                                line = re.sub(r'^-\s+', '', line)
+                                # 移除引号
+                                line = line.replace('"', '').replace('"', '').replace('\'', '')
+                                if line.strip():
+                                    clean_lines.append(line.strip())
+                            
+                            # 如果只有一行，直接使用
+                            if len(clean_lines) == 1 and len(clean_lines[0]) > 10:
+                                caption = clean_lines[0]
+                                if not any(caption.endswith(c) for c in ['.', '!', '?']):
+                                    caption += '.'
+                            
+                            # 如果有多行，尝试将它们组合为一个连贯的描述
+                            elif len(clean_lines) > 1:
+                                # 先检查是否每行都描述了不同的内容
+                                if all('frame' in line.lower() or 'image' in line.lower() for line in clean_lines[:3]) or \
+                                   any(line.startswith(str(i+1)) for i, line in enumerate(clean_lines[:3])):
+                                    # 这是对不同帧的描述，取第一个并继续
+                                    caption = clean_lines[0]
+                                    if not any(caption.endswith(c) for c in ['.', '!', '?']):
+                                        caption += '.'
+                                else:
+                                    # 这些行描述了一个连贯的场景，将它们组合起来
+                                    combined_text = ' '.join(clean_lines)
+                                    # 如果太长，只取两行
+                                    if len(combined_text) > 150:
+                                        combined_text = ' '.join(clean_lines[:2])
+                                    caption = combined_text
+                                    if not any(caption.endswith(c) for c in ['.', '!', '?']):
+                                        caption += '.'
+                        
+                        # 2. 如果有编号格式，去除编号
+                        caption = re.sub(r'^\d+\.\s*', '', caption)
+                        
+                        # 3. 去除引号
+                        caption = caption.replace('"', '').replace('"', '').replace('\'', '')
+                        
+                        # 4. 确保是英文格式（替换非ASCII字符）
+                        caption = re.sub(r'[^\x00-\x7F]+', ' ', caption)
+                        
+                        # 5. 处理特殊情况：空白帧或无内容
+                        if any(term in caption.lower() for term in ['no visible content', 'black screen', 'cannot', 'not possible', 'empty', 'blank']):
+                            caption = "A blank or black screen with no visible content."
+                        
+                        # 6. 确保最终结果格式良好（单行，简洁，有句点结尾）
+                        caption = caption.strip()
+                        if not caption.endswith('.'):
+                            caption += '.'
+                        
+                        # 确保有最小长度但不设置上限以保留完整内容
+                        if len(caption) < 10:
+                            caption = f"Video content showing {video_name}."
+                        
+                        console.print(f"[bold green]成功! 处理后标题: {caption}[/]")
                         return caption
+
                     else:
                         console.print(f"[bold yellow]返回状态码200，但数据格式不正确: {result}[/]")
                 else:
@@ -268,7 +341,7 @@ def get_video_caption(api_key, frame_paths):
                     }
                 ],
                 "temperature": 0.7,
-                "max_tokens": 60
+                "max_tokens": 200
             }
             
             # 发送文本请求
