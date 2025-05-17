@@ -1,5 +1,5 @@
 # LTX-Video-Trainer 系统Python启动脚本
-# 作者: pipchen（修改:Cascade）
+# 作者: pipchen
 # 日期: 2025-05-17
 
 # 使用系统Python路径
