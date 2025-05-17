@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 LTX-Video-Trainer 模型下载脚本
-作者: Cascade
+作者: pipchen
 日期: 2025-05-17
 """
 
