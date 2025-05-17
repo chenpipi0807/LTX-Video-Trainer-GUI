@@ -57,7 +57,7 @@ LTX-Video-Trainer 是一款专业的LTX视频LoRA模型训练工具，支持通�
    C:\ProgramData\anaconda3\python.exe scripts\minimal_ui.py
    ```
 
-## 环境安装
+## 环境要求
 
 ### 安装 PyTorch 与 CUDA 支持
 
