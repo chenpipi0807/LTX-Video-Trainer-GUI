@@ -46,16 +46,25 @@ LTX-Video-Trainer 是一款专业的LTX视频LoRA模型训练工具，支持通�
 - **CUDA**: CUDA 12.8
 - **硬盘空间**: 至少 50GB 可用空间
 
-## 快速启动
+### 启动方式
 
-1. **简单启动方式**:
-   - 右键点击 `run.ps1` 文件
-   - 选择"使用 PowerShell 运行"
+**方式一：使用PowerShell脚本（推荐）**
 
-2. **手动启动命令**:
-   ```powershell
-   C:\ProgramData\anaconda3\python.exe scripts\minimal_ui.py
-   ```
+- 如果使用标准Python环境：右键点击`run_system_python.ps1`，选择"使用PowerShell运行"
+- 如果使用Anaconda环境：右键点击`run.ps1`，选择"使用PowerShell运行"
+
+**方式二：手动运行命令**
+
+- 标准Python环境：
+  ```powershell
+  python.exe scripts\minimal_ui.py
+  ```
+
+- Anaconda环境：
+  ```powershell
+  C:\ProgramData\anaconda3\python.exe scripts\minimal_ui.py
+  ```
+
 
 ## 安装教程
 
