@@ -1,5 +1,7 @@
 # LTX-Video-Trainer-GUI 安装详情记录
 
+-我得说这玩意会劝退很多人......但值得！
+
 ## 步骤1：获取代码仓库
 
 首先需要从 GitHub 克隆仓库到本地：
@@ -321,7 +323,7 @@ python download_models.py
 - 保存位置：`models\t5-base`
 
 
-## 10. FFmpeg安装
+## 10: FFmpeg安装
 
 FFmpeg是项目运行的必要组件，项目中使用了FFmpeg来处理视频文件。
 
@@ -338,7 +340,7 @@ FFmpeg是项目运行的必要组件，项目中使用了FFmpeg来处理视频�
   
 
 
-### 启动方式
+## 11:启动GUI(真男人！恭喜你坚持到最后！)
 
 **方式一：使用PowerShell脚本（推荐）**
 
