@@ -365,7 +365,7 @@ FFmpeg是项目运行的必要组件，项目中使用了FFmpeg来处理视频�
 
 -写这个的时候是用的家里的3060，最后测试意外发现，我的老头乐显卡竟然能跑动的~
 
-![bebaa70dd5037d5d266cba8661ac820](https://github.com/user-attachments/assets/b8e8b3c7-96fc-4425-ad20-de119ca13d86)
+![image](https://github.com/user-attachments/assets/948a4580-de5f-41de-b8f3-f4c96d4d0264)
 
 
 
