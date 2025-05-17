@@ -96,7 +96,7 @@ LTX-Video-Trainer 是一款专业的LTX视频LoRA模型训练工具，支持通�
 - **默认保存位置**: `C:\Users\[用户名]\.cache\huggingface\hub\models--llava-hf--LLaVA-NeXT-Video-7B-hf\snapshots\[哈希值]\`
 - **说明**: 此模型用于视频自动标注，可以手动下载并放在上述目录
 
-### 3. T5-base (可选)
+### 3. T5-base (必需)
 
 - **下载地址**: [T5-base](https://huggingface.co/google-t5/t5-base/tree/main)
 - **保存位置**: `models\t5-base\`
