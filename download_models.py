@@ -50,26 +50,31 @@ def get_user_home():
 def get_model_files(repo_id, endpoint_url):
     """获取模型仓库中的所有文件列表"""
     try:
-        # 使用API获取仓库文件列表
-        repo_info = huggingface_hub.hf_api.repo_info(
-            repo_id=repo_id,
-            endpoint=endpoint_url
-        )
-        files_list = huggingface_hub.hf_api.list_repo_files(
-            repo_id=repo_id,
-            revision=repo_info.sha,
-            endpoint=endpoint_url
-        )
+        # 正确使用huggingface_hub API
+        from huggingface_hub import HfApi
+        api = HfApi(endpoint=endpoint_url)
+        
+        # 获取仓库信息
+        repo_info = api.repo_info(repo_id=repo_id)
+        
+        # 获取文件列表
+        files_list = api.list_repo_files(repo_id=repo_id, revision=repo_info.sha)
         return files_list
     except Exception as e:
         console.print(f"[bold red]无法获取模型文件列表: {str(e)}[/bold red]")
         return []
 
-def download_single_file(repo_id, file_path, local_dir, endpoint_url, retry_count=3):
-    """下载单个文件，支持重试"""
-    # 处理下载路径，避免创建models--author--model格式的目录
-    author, model_name = repo_id.split('/')
+def download_single_file(repo_id, file_path, local_dir, endpoint_url, retry_count=3, retry_delay=5):
+    """下载单个文件，支持重试
     
+    Args:
+        repo_id (str): 仓库ID
+        file_path (str): 要下载的文件路径
+        local_dir (str): 本地目录
+        endpoint_url (str): API端点URL
+        retry_count (int): 重试次数
+        retry_delay (int): 重试间隔秒数
+    """
     # 直接指定到目标目录，不创建子目录
     full_local_path = os.path.join(local_dir, file_path)
     os.makedirs(os.path.dirname(full_local_path), exist_ok=True)
@@ -81,17 +86,29 @@ def download_single_file(repo_id, file_path, local_dir, endpoint_url, retry_coun
             console.print(f"[green]文件 {file_path} 已存在，跳过[/green]")
             return True
     
-    # 尝试下载文件
+    # 为了显示下载进度，直接下载到最终目标位置
+    # 准备一个下载成功的标志
+    download_success = False
+    
+    # 为了避免创建模型子目录，我们先下载到缓存然后复制
     for attempt in range(retry_count):
         try:
-            console.print(f"[cyan]正在下载文件 {file_path} (尝试 {attempt+1}/{retry_count})[/cyan]")
-            # 下载文件到临时位置
+            if attempt > 0:
+                console.print(f"[yellow]正在重试下载文件 {file_path} (尝试 {attempt+1}/{retry_count})[/yellow]")
+            else:
+                console.print(f"[cyan]开始下载文件 {file_path}[/cyan]")
+            
+            # 使用不同的缓存目录以避免冲突
+            cache_folder = f".hf_cache_{attempt}"
+            
+            # 这里不使用progress_callback，让Hugging Face显示原生进度条
             temp_file = huggingface_hub.hf_hub_download(
                 repo_id=repo_id,
                 filename=file_path,
-                cache_dir=".hf_cache",  # 使用临时缓存目录
+                cache_dir=cache_folder,
                 endpoint=endpoint_url,
-                resume_download=True  # 支持断点继续下载
+                force_download=attempt > 0,  # 第一次尝试用resume，后续尝试强制重新下载
+                resume_download=attempt == 0,  # 第一次尝试时使用断点续传
             )
             
             # 将文件复制到目标位置
@@ -99,14 +116,36 @@ def download_single_file(repo_id, file_path, local_dir, endpoint_url, retry_coun
             import shutil
             shutil.copy2(temp_file, full_local_path)
             
-            return True
+            # 清理缓存
+            try:
+                shutil.rmtree(cache_folder, ignore_errors=True)
+            except:
+                pass
+            
+            download_success = True
+            break
         except Exception as e:
+            # 清理临时缓存
+            try:
+                import shutil
+                shutil.rmtree(f".hf_cache_{attempt}", ignore_errors=True)
+            except:
+                pass
+                
             if attempt < retry_count - 1:
-                console.print(f"[yellow]下载文件 {file_path} 失败: {str(e)}，将重试...[/yellow]")
-                time.sleep(2)  # 等待几秒后重试
+                # 尝试识别错误类型
+                error_str = str(e)
+                if "IncompleteRead" in error_str or "Connection broken" in error_str:
+                    retry_delay_time = retry_delay * (attempt + 1)  # 每次重试增加等待时间
+                    console.print(f"[yellow]网络连接中断: {error_str}，{retry_delay_time}秒后重试...[/yellow]")
+                    time.sleep(retry_delay_time)
+                else:
+                    console.print(f"[yellow]下载失败: {error_str}，{retry_delay}秒后重试...[/yellow]")
+                    time.sleep(retry_delay)
             else:
                 console.print(f"[bold red]下载文件 {file_path} 失败: {str(e)}[/bold red]")
-                return False
+    
+    return download_success
 
 def retry_failed_files(repo_id, failed_files, local_dir, endpoint_url):
     """重试下载失败的文件"""
@@ -175,18 +214,47 @@ def download_model(model_name, mirror="huggingface"):
     files_list = get_model_files(repo_id, endpoint_url)
     
     if not files_list:
-        console.print(f"[bold red]无法获取 {model_name} 模型文件列表，将尝试整体下载[/bold red]")
+        console.print(f"[bold red]无法获取 {model_name} 模型文件列表，将检查本地文件并尝试整体下载[/bold red]")
+        
+        # 尝试检查本地文件结构
+        if os.path.exists(local_dir) and os.listdir(local_dir):
+            # 检查关键文件是否存在
+            key_files = [
+                "model_index.json",
+                "config.json",
+                "diffusion_pytorch_model.safetensors",
+                "scheduler/scheduler_config.json"
+            ]
+            
+            missing_key_files = []
+            for key_file in key_files:
+                if not os.path.exists(os.path.join(local_dir, key_file)):
+                    missing_key_files.append(key_file)
+            
+            if not missing_key_files:
+                console.print(f"[bold green]本地目录已存在关键模型文件，跳过下载[/bold green]")
+                return True
+            else:
+                console.print(f"[yellow]本地目录缺失 {len(missing_key_files)} 个关键文件，需要下载[/yellow]")
+                for file in missing_key_files[:5]:
+                    console.print(f"  - {file}")
+        
         try:
             # 如果无法获取文件列表，先下载到临时目录然后移动
             temp_dir = ".hf_temp_download"
+            if os.path.exists(temp_dir):
+                import shutil
+                shutil.rmtree(temp_dir)  # 清理在之前下载过程中可能遗留的临时目录
             os.makedirs(temp_dir, exist_ok=True)
             
+            console.print(f"[cyan]开始下载 {model_name} 模型...[/cyan]")
             snapshot_dir = huggingface_hub.snapshot_download(
                 repo_id=repo_id,
                 cache_dir=".hf_cache",
                 local_dir=temp_dir,
                 local_dir_use_symlinks=False,
-                endpoint=endpoint_url
+                endpoint=endpoint_url,
+                resume_download=True  # 允许断点续传
             )
             
             # 找到下载的目录，通常是 models--author--model 格式
@@ -208,17 +276,29 @@ def download_model(model_name, mirror="huggingface"):
                 # 确保目标目录存在
                 os.makedirs(local_dir, exist_ok=True)
                 
-                # 移动文件
-                for item in os.listdir(download_dir):
+                # 获取下载目录中的所有文件和目录
+                items_to_copy = []
+                for root, dirs, files in os.walk(download_dir):
+                    rel_path = os.path.relpath(root, download_dir)
+                    if rel_path == ".":
+                        rel_path = ""
+                    
+                    for file in files:
+                        items_to_copy.append(os.path.join(rel_path, file))
+                
+                # 显示文件复制进度
+                console.print(f"[cyan]正在复制 {len(items_to_copy)} 个文件到目标目录...[/cyan]")
+                
+                # 复制文件
+                for item in items_to_copy:
                     src = os.path.join(download_dir, item)
                     dst = os.path.join(local_dir, item)
                     
-                    if os.path.isdir(src):
-                        if os.path.exists(dst):
-                            shutil.rmtree(dst)
-                        shutil.copytree(src, dst)
-                    else:
-                        shutil.copy2(src, dst)
+                    # 创建目标目录（如果不存在）
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    
+                    # 复制文件
+                    shutil.copy2(src, dst)
                 
                 # 清理临时目录
                 shutil.rmtree(temp_dir)
@@ -265,15 +345,30 @@ def download_model(model_name, mirror="huggingface"):
     # 记录下载失败的文件
     failed_files = []
     
-    # 逐个下载文件
-    with Progress(SpinnerColumn(), TextColumn("[bold blue]下载进度"), BarColumn(), TextColumn("{task.completed}/{task.total}"), console=console) as progress:
-        task = progress.add_task("[下载文件]", total=len(files_to_download))
+    # 逐个下载文件 - 不使用自定义进度条，保留原生进度显示
+    console.print(f"[bold blue]开始下载 {len(files_to_download)} 个文件，将按顺序下载[/bold blue]")
+    
+    completed = 0
+    for file_path in files_to_download:
+        success = download_single_file(repo_id, file_path, local_dir, endpoint_url)
+        if success:
+            completed += 1
+            console.print(f"[green]进度: {completed}/{len(files_to_download)} 完成[/green]")
+        else:
+            failed_files.append(file_path)
+    
+    console.print(f"[bold {'green' if not failed_files else 'yellow'}]下载完成: {completed}/{len(files_to_download)} 文件成功[/bold]")
+    
+    # 下载完成后再检查一次文件是否存在
+    if failed_files:
+        # 再次检查失败的文件是否实际存在（有时文件实际下载成功但报错）
+        really_failed = []
+        for file_path in failed_files:
+            full_path = os.path.join(local_dir, file_path)
+            if not os.path.exists(full_path) or os.path.getsize(full_path) == 0:
+                really_failed.append(file_path)
         
-        for file_path in files_to_download:
-            success = download_single_file(repo_id, file_path, local_dir, endpoint_url)
-            if not success:
-                failed_files.append(file_path)
-            progress.update(task, advance=1)
+        failed_files = really_failed
     
     # 如果有失败的文件，询问是否重试
     if failed_files:
