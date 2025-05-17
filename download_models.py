@@ -18,6 +18,12 @@ import huggingface_hub
 # 初始化Rich控制台
 console = Console(highlight=False)
 
+# 镜像地址
+MIRRORS = {
+    "huggingface": "https://huggingface.co",
+    "aliyun": "https://hf-mirror.com"  # 阿里云镜像
+}
+
 # 定义模型信息
 MODELS = {
     "LTX-Video-0.9.7-diffusers": {
@@ -41,12 +47,21 @@ def get_user_home():
     """获取用户主目录"""
     return str(Path.home())
 
-def download_model(model_name):
-    """下载指定的模型"""
+def download_model(model_name, mirror="huggingface"):
+    """下载指定的模型
+    
+    Args:
+        model_name (str): 要下载的模型名称
+        mirror (str): 使用的镜像源，默认为原始Hugging Face
+    """
     model_info = MODELS[model_name]
     repo_id = model_info["repo_id"]
     local_dir = model_info["local_dir"]
     required = model_info["required"]
+    
+    # 设置镜像地址
+    endpoint_url = MIRRORS.get(mirror, MIRRORS["huggingface"])
+    console.print(f"[blue]使用镜像源: {mirror} ({endpoint_url})[/blue]")
     
     # 如果是LLaVA-NeXT模型，使用系统默认目录
     if local_dir is None:
@@ -60,38 +75,24 @@ def download_model(model_name):
         os.makedirs(cache_dir, exist_ok=True)
         console.print(f"[green]模型 {model_name} 将下载到 {os.path.abspath(cache_dir)}[/green]")
     
-    # 开始下载
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[bold blue]{task.description}"),
-        BarColumn(),
-        TextColumn("[bold green]{task.fields[status]}"),
-        TimeElapsedColumn(),
-        console=console
-    ) as progress:
-        task = progress.add_task(
-            f"[cyan]正在下载 {model_name}...",
-            total=None,
-            status="初始化中"
+    # 开始下载 - 直接使用huggingface_hub的进度显示
+    console.print(f"[cyan]正在下载 {model_name}...[/cyan]")
+    try:
+        # 使用huggingface_hub下载模型
+        snapshot_dir = huggingface_hub.snapshot_download(
+            repo_id=repo_id,
+            cache_dir=cache_dir,
+            local_dir=cache_dir,
+            local_dir_use_symlinks=False,
+            endpoint=endpoint_url  # 指定使用的镜像源
         )
-        
-        try:
-            # 使用huggingface_hub下载模型
-            snapshot_dir = huggingface_hub.snapshot_download(
-                repo_id=repo_id,
-                cache_dir=cache_dir,
-                local_dir=cache_dir,
-                local_dir_use_symlinks=False,
-            )
-            progress.update(task, status="下载完成")
-            console.print(f"[bold green]✓ 模型 {model_name} 已成功下载到: {snapshot_dir}[/bold green]")
-            return True
-        except Exception as e:
-            progress.update(task, status="下载失败")
-            console.print(f"[bold red]× 模型 {model_name} 下载失败: {str(e)}[/bold red]")
-            if required:
-                console.print("[bold red]这是必需的模型，请手动下载！[/bold red]")
-            return False
+        console.print(f"[bold green]✓ 模型 {model_name} 已成功下载到: {snapshot_dir}[/bold green]")
+        return True
+    except Exception as e:
+        console.print(f"[bold red]× 模型 {model_name} 下载失败: {str(e)}[/bold red]")
+        if required:
+            console.print("[bold red]这是必需的模型，请手动下载！[/bold red]")
+        return False
 
 def main():
     """主函数"""
@@ -102,8 +103,16 @@ def main():
     if not os.path.exists("models"):
         os.makedirs("models")
     
+    # 选择镜像源
+    console.print("[bold yellow]请选择下载镜像源:[/bold yellow]")
+    console.print("  1. Hugging Face官方源 (国外用户推荐)")
+    console.print("  2. 阿里云镜像 (国内用户推荐，加速下载)")
+    
+    mirror_choice = input("\n请选择镜像源 (默认:1): ").strip() or "1"
+    mirror = "huggingface" if mirror_choice == "1" else "aliyun"
+    
     # 显示下载选项
-    console.print("[bold yellow]可下载的模型:[/bold yellow]")
+    console.print("\n[bold yellow]可下载的模型:[/bold yellow]")
     for i, (name, info) in enumerate(MODELS.items(), 1):
         status = "必需" if info["required"] else "可选"
         console.print(f"  {i}. {name} [{status}]")
@@ -151,7 +160,7 @@ def main():
     
     success_count = 0
     for model_name in models_to_download:
-        if download_model(model_name):
+        if download_model(model_name, mirror=mirror):
             success_count += 1
     
     # 显示下载结果
