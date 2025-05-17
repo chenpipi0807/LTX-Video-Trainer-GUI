@@ -1118,8 +1118,10 @@ def run_pipeline(basename, dims, frames, config_name, rank, split_scenes=True, c
                     output_path = os.path.join(resized_dir, video_filename)
                     
                     if not os.path.exists(output_path):
+                        # 使用本地 FFmpeg 路径而不是依赖系统 PATH
+                        ffmpeg_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'bin', 'ffmpeg.exe')
                         resize_cmd = [
-                            "ffmpeg",
+                            ffmpeg_path if os.path.exists(ffmpeg_path) else "ffmpeg",
                             "-i", str(video_file),
                             "-vf", f"scale={width}:{height}",
                             "-c:v", "libx264",
