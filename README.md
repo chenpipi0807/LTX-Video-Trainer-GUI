@@ -57,36 +57,15 @@ LTX-Video-Trainer 是一款专业的LTX视频LoRA模型训练工具，支持通�
    C:\ProgramData\anaconda3\python.exe scripts\minimal_ui.py
    ```
 
-## 安装教程(https://github.com/chenpipi0807/LTX-Video-Trainer-GUI/blob/main/%E5%AE%89%E8%A3%85%E4%B8%8E%E4%BD%BF%E7%94%A8.md)
+## 安装教程
 
-### 安装 PyTorch 与 CUDA 支持
+详细的安装指南请参考: [安装指南](INSTALLATION_CN.md)
 
-必须安装适配 CUDA 12.8 的 PyTorch 夜间版本:
-```powershell
-C:\ProgramData\anaconda3\python.exe -m pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
-```
-
-### 安装最新版 Diffusers 库
-
-必须安装 GitHub 上的最新版本，官方发布版本无法正常运行 VAE:
-```powershell
-C:\ProgramData\anaconda3\python.exe -m pip install git+https://github.com/huggingface/diffusers.git
-```
-
-### 验证安装
-
-```powershell
-C:\ProgramData\anaconda3\python.exe check_cuda.py
-```
-
-正确输出应类似:
-```
-PyTorch版本: 2.8.0.dev20250511+cu128
-Torchvision版本: 0.22.0.dev20250512+cu128
-CUDA可用性: True
-检测到的GPU: NVIDIA GeForce RTX 4090
-CUDA版本: 12.8
-```
+安装过程包括以下步骤:
+1. 获取代码仓库
+2. 安装PyTorch和Diffusers
+3. 下载必要模型
+4. 运行项目
 
 ## 必要模型下载
 
