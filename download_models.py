@@ -155,10 +155,13 @@ def retry_failed_files(repo_id, failed_files, local_dir, endpoint_url):
     still_failed = []
     console.print("\n[bold yellow]开始重试下载失败的文件...[/bold yellow]")
     
-    for file_path in failed_files:
-        console.print(f"\n[cyan]重新下载文件: {file_path}[/cyan]")
-        if not download_single_file(repo_id, file_path, local_dir, endpoint_url, retry_count=1):
+    for i, file_path in enumerate(failed_files):
+        console.print(f"[cyan]重新下载文件 ({i+1}/{len(failed_files)}): {file_path}[/cyan]")
+        if not download_single_file(repo_id, file_path, local_dir, endpoint_url, retry_count=2):
             still_failed.append(file_path)
+        # 增加成功提示
+        else:
+            console.print(f"[green]重新下载成功: {file_path}[/green]")
     
     return still_failed
 
@@ -357,7 +360,11 @@ def download_model(model_name, mirror="huggingface"):
         else:
             failed_files.append(file_path)
     
-    console.print(f"[bold {'green' if not failed_files else 'yellow'}]下载完成: {completed}/{len(files_to_download)} 文件成功[/bold]")
+    # 避免Rich格式化错误，使用条件选择完整的字符串
+    if not failed_files:
+        console.print(f"[bold green]下载完成: {completed}/{len(files_to_download)} 文件成功[/bold green]")
+    else:
+        console.print(f"[bold yellow]下载完成: {completed}/{len(files_to_download)} 文件成功[/bold yellow]")
     
     # 下载完成后再检查一次文件是否存在
     if failed_files:
@@ -465,8 +472,11 @@ def main():
         if download_model(model_name, mirror=mirror):
             success_count += 1
     
-    # 显示下载结果
-    console.print(f"\n[bold {'green' if success_count == len(models_to_download) else 'yellow'}]下载完成: {success_count}/{len(models_to_download)} 个模型成功下载[/bold]")
+    # 显示下载结果 - 避免Rich格式化错误
+    if success_count == len(models_to_download):
+        console.print(f"\n[bold green]下载完成: {success_count}/{len(models_to_download)} 个模型成功下载[/bold green]")
+    else:
+        console.print(f"\n[bold yellow]下载完成: {success_count}/{len(models_to_download)} 个模型成功下载[/bold yellow]")
     
     # 等待用户确认
     input("\n按回车键继续...")
