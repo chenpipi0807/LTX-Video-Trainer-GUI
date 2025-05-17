@@ -67,6 +67,10 @@ def get_model_files(repo_id, endpoint_url):
 
 def download_single_file(repo_id, file_path, local_dir, endpoint_url, retry_count=3):
     """下载单个文件，支持重试"""
+    # 处理下载路径，避免创建models--author--model格式的目录
+    author, model_name = repo_id.split('/')
+    
+    # 直接指定到目标目录，不创建子目录
     full_local_path = os.path.join(local_dir, file_path)
     os.makedirs(os.path.dirname(full_local_path), exist_ok=True)
     
@@ -77,17 +81,24 @@ def download_single_file(repo_id, file_path, local_dir, endpoint_url, retry_coun
             console.print(f"[green]文件 {file_path} 已存在，跳过[/green]")
             return True
     
+    # 尝试下载文件
     for attempt in range(retry_count):
         try:
             console.print(f"[cyan]正在下载文件 {file_path} (尝试 {attempt+1}/{retry_count})[/cyan]")
-            huggingface_hub.hf_hub_download(
+            # 下载文件到临时位置
+            temp_file = huggingface_hub.hf_hub_download(
                 repo_id=repo_id,
                 filename=file_path,
-                local_dir=local_dir,
-                local_dir_use_symlinks=False,
+                cache_dir=".hf_cache",  # 使用临时缓存目录
                 endpoint=endpoint_url,
                 resume_download=True  # 支持断点继续下载
             )
+            
+            # 将文件复制到目标位置
+            os.makedirs(os.path.dirname(full_local_path), exist_ok=True)
+            import shutil
+            shutil.copy2(temp_file, full_local_path)
+            
             return True
         except Exception as e:
             if attempt < retry_count - 1:
@@ -166,16 +177,57 @@ def download_model(model_name, mirror="huggingface"):
     if not files_list:
         console.print(f"[bold red]无法获取 {model_name} 模型文件列表，将尝试整体下载[/bold red]")
         try:
-            # 如果无法获取文件列表，尝试整体下载
+            # 如果无法获取文件列表，先下载到临时目录然后移动
+            temp_dir = ".hf_temp_download"
+            os.makedirs(temp_dir, exist_ok=True)
+            
             snapshot_dir = huggingface_hub.snapshot_download(
                 repo_id=repo_id,
-                cache_dir=local_dir if local_dir != os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub") else None,
-                local_dir=local_dir,
+                cache_dir=".hf_cache",
+                local_dir=temp_dir,
                 local_dir_use_symlinks=False,
                 endpoint=endpoint_url
             )
-            console.print(f"[bold green]✓ 模型 {model_name} 已成功下载到: {snapshot_dir}[/bold green]")
-            return True
+            
+            # 找到下载的目录，通常是 models--author--model 格式
+            author, model_name_from_repo = repo_id.split('/')
+            expected_subdir = f"models--{author.replace('-', '-')}--{model_name_from_repo.replace('-', '-')}"
+            
+            # 确定实际下载的目录
+            download_dir = None
+            for item in os.listdir(temp_dir):
+                item_path = os.path.join(temp_dir, item)
+                if os.path.isdir(item_path) and item.startswith("models--"):
+                    download_dir = item_path
+                    break
+            
+            if download_dir:
+                # 移动文件到目标目录
+                import shutil
+                
+                # 确保目标目录存在
+                os.makedirs(local_dir, exist_ok=True)
+                
+                # 移动文件
+                for item in os.listdir(download_dir):
+                    src = os.path.join(download_dir, item)
+                    dst = os.path.join(local_dir, item)
+                    
+                    if os.path.isdir(src):
+                        if os.path.exists(dst):
+                            shutil.rmtree(dst)
+                        shutil.copytree(src, dst)
+                    else:
+                        shutil.copy2(src, dst)
+                
+                # 清理临时目录
+                shutil.rmtree(temp_dir)
+                
+                console.print(f"[bold green]✓ 模型 {model_name} 已成功下载到: {os.path.abspath(local_dir)}[/bold green]")
+                return True
+            else:
+                console.print(f"[bold red]无法找到下载的模型文件[/bold red]")
+                return False
         except Exception as e:
             console.print(f"[bold red]× 模型 {model_name} 下载失败: {str(e)}[/bold red]")
             if required:
