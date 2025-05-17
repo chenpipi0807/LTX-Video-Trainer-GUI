@@ -321,11 +321,21 @@ python download_models.py
 - 保存位置：`models\t5-base`
 
 
+## 10. FFmpeg安装
 
-## 注意事项
+FFmpeg是项目运行的必要组件，项目中使用了FFmpeg来处理视频文件。
 
-目前测试的机型和环境有限，如果遇到问题请在github上提交issue，我会尽力帮助你解决。
-当然本人时间精力有限，无法全力适配所有机型和环境，还请见谅。    
+### 自动安装FFmpeg
+
+双击运行 install_ffmpeg_easy.bat，脚本会自动下载并安装FFmpeg。
+
+### 手动安装FFmpeg
+
+1. 下载FFmpeg：访问FFmpeg官方网站下载Windows版本的FFmpeg：https://ffmpeg.org/download.html
+2. 解压FFmpeg：将下载的FFmpeg解压到项目目录的bin文件夹中。
+3. 设置环境变量：运行set_ffmpeg_path.bat，将FFmpeg添加到系统环境变量中。  
+
+  
 
 
 ### 启动方式
@@ -353,4 +363,12 @@ python download_models.py
 -写这个的时候是用的家里的3060，最后测试意外发现，我的老头乐显卡竟然能跑动的~
 
 ![bebaa70dd5037d5d266cba8661ac820](https://github.com/user-attachments/assets/b8e8b3c7-96fc-4425-ad20-de119ca13d86)
+
+
+
+
+## 注意事项
+
+目前测试的机型和环境有限，如果遇到问题请在github上提交issue，我会尽力帮助你解决。
+当然本人时间精力有限，无法全力适配所有机型和环境，还请见谅。  
 
