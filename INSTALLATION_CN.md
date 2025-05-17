@@ -311,7 +311,8 @@ python download_models.py
 ### 2. LLaVA-NeXT-Video-7B-hf (用于视频标注，可选)
 
 - 下载地址：[LLaVA-NeXT-Video-7B-hf](https://huggingface.co/llava-hf/LLaVA-NeXT-Video-7B-hf/tree/main)
-- 默认保存位置：`C:\Users\[用户名]\.cache\huggingface\hub\models--llava-hf--LLaVA-NeXT-Video-7B-hf\snapshots\[哈希值]`
+- 默认保存位置：`C:\Users\[用户名]\.cache\huggingface\hub\models--llava-hf--LLaVA-NeXT-Video-7B-hf`
+- 如果手动下载需要放置在`C:\Users\[用户名]\.cache\huggingface\hub\models--llava-hf--LLaVA-NeXT-Video-7B-hf\snapshots\[哈希值]`
 - 注意：此路径因用户而异，使用脚本下载时会自动选择适当路径
 
 ### 3. T5-base (必需)
