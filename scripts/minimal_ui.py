@@ -1517,6 +1517,112 @@ def run_pipeline(basename, dims, frames, config_name, rank, split_scenes=True, c
     if hasattr(status, 'update'):
         current_status = status.value if hasattr(status, 'value') else ""
         status.update(value=current_status + "\n\n=== 步骤3: 开始数据预处理 ===")
+        
+    # ======== 步骤3.0: 创建train子文件夹并复制所需文件 ========
+    logger.info("\n=== 创建train子文件夹并复制所需文件 ===")
+    if hasattr(status, 'update'):
+        current_status = status.value if hasattr(status, 'value') else ""
+        status.update(value=current_status + "\n\n=== 创建train子文件夹并复制所需文件 ===")
+    
+    # 创建train子文件夹
+    train_dir = os.path.join(dataset_path, "train")
+    os.makedirs(train_dir, exist_ok=True)
+    logger.info(f"创建/确认train子文件夹: {train_dir}")
+    
+    # 1. 复制调整过分辨率的视频文件
+    resized_dir = os.path.join(dataset_path, "caption_resized")
+    if os.path.exists(resized_dir) and os.path.isdir(resized_dir):
+        # 创建train目录中的caption_resized子目录
+        train_resized_dir = os.path.join(train_dir, "caption_resized")
+        os.makedirs(train_resized_dir, exist_ok=True)
+        
+        # 复制视频文件
+        video_files = []
+        for ext in [".mp4", ".avi", ".mov", ".mkv"]:
+            video_files.extend(list(Path(resized_dir).glob(f"*{ext}")))
+        
+        if video_files:
+            logger.info(f"复制{len(video_files)}个调整过分辨率的视频到train/caption_resized目录")
+            for video_file in video_files:
+                dest_path = os.path.join(train_resized_dir, os.path.basename(str(video_file)))
+                if not os.path.exists(dest_path):
+                    shutil.copy2(str(video_file), dest_path)
+        else:
+            logger.warning("没有找到调整过分辨率的视频文件")
+    
+    # 2. 复制JSON格式标注文件
+    # 复制根目录的captions.json
+    root_json = os.path.join(dataset_path, "captions.json")
+    if os.path.exists(root_json):
+        train_json = os.path.join(train_dir, "captions.json")
+        shutil.copy2(root_json, train_json)
+        logger.info(f"复制标注JSON文件到train目录: {train_json}")
+    
+    # 复制caption目录的captions.json
+    caption_json = os.path.join(caption_dir, "captions.json")
+    if os.path.exists(caption_json):
+        # 创建train/caption目录
+        train_caption_dir = os.path.join(train_dir, "caption")
+        os.makedirs(train_caption_dir, exist_ok=True)
+        train_caption_json = os.path.join(train_caption_dir, "captions.json")
+        shutil.copy2(caption_json, train_caption_json)
+        logger.info(f"复制caption目录的JSON文件到train/caption目录: {train_caption_json}")
+    
+    # 3. 复制TXT格式标注文件
+    # 复制根目录的caption.txt
+    root_txt = os.path.join(dataset_path, "caption.txt")
+    if os.path.exists(root_txt):
+        train_txt = os.path.join(train_dir, "caption.txt")
+        shutil.copy2(root_txt, train_txt)
+        logger.info(f"复制根目录标注TXT文件到train目录: {train_txt}")
+    
+    # 复制caption目录的caption.txt
+    caption_txt = os.path.join(caption_dir, "caption.txt")
+    if os.path.exists(caption_txt):
+        train_caption_txt = os.path.join(train_caption_dir, "caption.txt")
+        if not os.path.exists(train_caption_dir):
+            os.makedirs(train_caption_dir, exist_ok=True)
+        shutil.copy2(caption_txt, train_caption_txt)
+        logger.info(f"复制caption目录的TXT文件到train/caption目录: {train_caption_txt}")
+    
+    # 复制scenes目录的caption.txt
+    scenes_dir = os.path.join(dataset_path, "scenes")
+    scenes_txt = os.path.join(scenes_dir, "caption.txt")
+    if os.path.exists(scenes_txt):
+        # 创建train/scenes目录
+        train_scenes_dir = os.path.join(train_dir, "scenes")
+        os.makedirs(train_scenes_dir, exist_ok=True)
+        train_scenes_txt = os.path.join(train_scenes_dir, "caption.txt")
+        shutil.copy2(scenes_txt, train_scenes_txt)
+        logger.info(f"复制scenes目录的TXT文件到train/scenes目录: {train_scenes_txt}")
+    
+    # 4. 创建media_path.txt文件（预处理脚本需要这个文件）
+    # 获取train/caption_resized目录中的所有视频文件名
+    train_video_files = []
+    train_resized_dir = os.path.join(train_dir, "caption_resized")
+    if os.path.exists(train_resized_dir):
+        for ext in [".mp4", ".avi", ".mov", ".mkv"]:
+            train_video_files.extend([os.path.basename(str(f)) for f in Path(train_resized_dir).glob(f"*{ext}")])
+    
+    # 如果找不到视频文件，则查找train/caption目录
+    if not train_video_files and os.path.exists(os.path.join(train_dir, "caption")):
+        for ext in [".mp4", ".avi", ".mov", ".mkv"]:
+            train_video_files.extend([os.path.basename(str(f)) for f in Path(os.path.join(train_dir, "caption")).glob(f"*{ext}")])
+    
+    # 创建media_path.txt
+    if train_video_files:
+        media_path_txt = os.path.join(train_dir, "media_path.txt")
+        with open(media_path_txt, 'w', encoding='utf-8') as f:
+            for filename in train_video_files:
+                f.write(f"{filename}\n")
+        logger.info(f"创建train目录中的media_path.txt文件，包含{len(train_video_files)}个视频文件路径")
+    else:
+        logger.warning("没有找到视频文件，无法在train目录创建media_path.txt")
+    
+    logger.info("文件复制完成，将从train目录获取预处理所需的输入文件")
+    if hasattr(status, 'update'):
+        current_status = status.value if hasattr(status, 'value') else ""
+        status.update(value=current_status + "\n文件复制完成，将从train目录获取预处理所需的输入文件")
     
     # 初始化预处理路径
     precomputed_path = os.path.join(dataset_path, ".precomputed")
@@ -1798,10 +1904,11 @@ def run_pipeline(basename, dims, frames, config_name, rank, split_scenes=True, c
                     logger.info(f"使用GPU: {gpu_name}, 显存: {gpu_mem:.2f}GB")
                 
                 # 确保传递帧数参数
+                train_dir = os.path.join(dataset_path, "train")
                 preprocess_cmd = [
                     sys.executable,
                     fix_resolution_script,
-                    os.path.dirname(caption_dir),  # 输入整个数据集目录而非仅caption子目录
+                    train_dir,  # 使用train子目录作为输入源
                     "--resolution-buckets", resolution_bucket,
                     "--output-dir", precomputed_path,
                     "--batch-size", "1",  # 小批量大小防止内存问题
@@ -1809,6 +1916,7 @@ def run_pipeline(basename, dims, frames, config_name, rank, split_scenes=True, c
                     "--device", device,  # 动态使用可用的最佳设备
                     "--frames", frames  # 显式传递帧数参数
                 ]
+                logger.info(f"预处理将使用 {train_dir} 作为输入源目录，输出保存到 {precomputed_path}")
                 
                 # 打印完整的分辨率信息便于调试
                 logger.info(f"使用分辨率: {resolution_bucket}, 帧数: {frames}")
@@ -1870,16 +1978,18 @@ sys.exit(return_code)
                 logger.info(f"调用预处理脚本: {script_to_use}")
                 
                 # 构建预处理命令
+                train_dir = os.path.join(dataset_path, "train")
                 preprocess_cmd = [
                     sys.executable,
                     script_to_use,
-                    os.path.dirname(caption_dir),  # 输入整个数据集目录而非仅caption子目录
+                    train_dir,  # 使用train子目录作为输入源
                     "--resolution-buckets", resolution_bucket,
                     "--output-dir", precomputed_path,
                     "--batch-size", "1",  # 小批量大小防止内存问题
                     "--num-workers", "1",  # 单线程减少问题
                     "--device", "cpu"  # 强制使用CPU模式
                 ]
+                logger.info(f"预处理将使用 {train_dir} 作为输入源目录，输出保存到 {precomputed_path}")
                 
             # 这里是关键点 - 实际执行预处理命令
             logger.info(f"执行预处理命令: {' '.join(preprocess_cmd)}")
