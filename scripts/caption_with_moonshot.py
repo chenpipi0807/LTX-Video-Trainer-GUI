@@ -172,7 +172,7 @@ def get_video_caption(api_key, frame_paths):
             # 添加文本提示
             message_content.append({
                 "type": "text",
-                "text": "Create a detailed English caption for these video frames. Describe what is happening in the video, including all important subjects, actions, and visual elements. Provide context about the setting and atmosphere. Aim for a comprehensive description in 2-3 sentences."
+                "text": "These are three frames (beginning, middle, and end) from a single continuous video. Based on these sequential frames, describe what is happening in the entire video. Focus on the actions, movements, and changes that occur throughout the video. Provide a comprehensive description of the video content in 2-3 sentences."
             })
             
             # 完整请求数据
@@ -181,7 +181,7 @@ def get_video_caption(api_key, frame_paths):
                 "messages": [
                     {
                         "role": "system",
-                        "content": "You are a professional video content describer. Create detailed, descriptive English captions for videos. Your descriptions should be comprehensive, covering all important visual elements, actions, and context in 2-3 sentences."
+                        "content": "You are a professional video content analyzer. Your task is to examine a sequence of frames from a video and describe the complete video content. Focus on narrating the continuous action and changes across the entire video, not just static elements in individual frames. Pay attention to movements, transitions, and the story being told through the sequence. Provide a comprehensive description in 2-3 sentences."
                     },
                     {
                         "role": "user",
