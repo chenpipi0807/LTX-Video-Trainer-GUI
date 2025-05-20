@@ -9,6 +9,11 @@ $pythonPath = "C:\ProgramData\anaconda3\python.exe"
 $scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $scriptPath
 
+# Set PYTHONPATH to include the src directory - This fixes the module import issue
+Write-Host "Setting PYTHONPATH to include src directory..." -ForegroundColor Yellow
+$env:PYTHONPATH = "$scriptPath\src;$env:PYTHONPATH"
+Write-Host "PYTHONPATH = $env:PYTHONPATH" -ForegroundColor Yellow
+
 # Display startup info
 Write-Host "Starting LTX-Video Trainer..." -ForegroundColor Cyan
 Write-Host "Using Python: $pythonPath" -ForegroundColor Yellow
