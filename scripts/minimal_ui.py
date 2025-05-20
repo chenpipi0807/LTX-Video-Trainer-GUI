@@ -177,7 +177,7 @@ def run_command(cmd, status=None, verbose=True):
     is_preprocess_cmd = "preprocess_zero_workers.py" in cmd_str or "fix_resolution_wrapper.py" in cmd_str
     is_training_cmd = "train.py" in cmd_str
     is_convert_cmd = "convert_checkpoint.py" in cmd_str
-    is_caption_cmd = "caption_videos.py" in cmd_str  # 添加对标注命令的判断
+    is_caption_cmd = "caption_videos.py" in cmd_str or "caption_with_moonshot.py" in cmd_str  # 添加对所有标注命令的判断
     
     # 对需要实时输出的命令特殊处理
     need_realtime_output = is_preprocess_cmd or is_training_cmd or is_convert_cmd or is_caption_cmd  # 包含标注命令
@@ -1584,6 +1584,12 @@ def run_pipeline(basename, dims, frames, config_name, rank, split_scenes=True, c
             os.makedirs(train_caption_dir, exist_ok=True)
         shutil.copy2(caption_txt, train_caption_txt)
         logger.info(f"复制caption目录的TXT文件到train/caption目录: {train_caption_txt}")
+        
+        # 复制到train根目录
+        train_root_txt = os.path.join(train_dir, "caption.txt")
+        if not os.path.exists(train_root_txt):
+            shutil.copy2(caption_txt, train_root_txt)
+            logger.info(f"复制caption目录的TXT文件到train根目录: {train_root_txt}")
     
     # 复制scenes目录的caption.txt
     scenes_dir = os.path.join(dataset_path, "scenes")
@@ -1609,15 +1615,67 @@ def run_pipeline(basename, dims, frames, config_name, rank, split_scenes=True, c
         for ext in [".mp4", ".avi", ".mov", ".mkv"]:
             train_video_files.extend([os.path.basename(str(f)) for f in Path(os.path.join(train_dir, "caption")).glob(f"*{ext}")])
     
-    # 创建media_path.txt
+    # 创建media_path.txt文件，使用相对路径指向caption_resized目录中的视频
     if train_video_files:
         media_path_txt = os.path.join(train_dir, "media_path.txt")
         with open(media_path_txt, 'w', encoding='utf-8') as f:
             for filename in train_video_files:
-                f.write(f"{filename}\n")
-        logger.info(f"创建train目录中的media_path.txt文件，包含{len(train_video_files)}个视频文件路径")
+                # 将视频文件前加上caption_resized/路径，这样预处理脚本才能在train子目录中找到正确的视频文件
+                f.write(f"caption_resized/{filename}\n")
+        logger.info(f"创建train目录中的media_path.txt文件，包含{len(train_video_files)}个带路径的视频文件")
+        # 显示文件内容便于调试
+        try:
+            with open(media_path_txt, 'r', encoding='utf-8') as f:
+                content = f.read()
+                logger.info(f"media_path.txt内容预览\n{content[:500]}...")
+        except Exception as e:
+            logger.error(f"读取media_path.txt内容时出错: {str(e)}")
     else:
         logger.warning("没有找到视频文件，无法在train目录创建media_path.txt")
+    
+    # 再次检查train目录根目录是否存在caption.txt文件，这是预处理脚本的必要条件
+    train_caption_txt = os.path.join(train_dir, "caption.txt")
+    if not os.path.exists(train_caption_txt):
+        # 如果train目录根目录下没有caption.txt，尝试从caption目录或数据集根目录复制
+        logger.info(f"警告: train目录根目录下没有caption.txt文件，尝试复制...")
+        
+        # 从caption目录复制
+        caption_txt = os.path.join(caption_dir, "caption.txt")
+        if os.path.exists(caption_txt):
+            shutil.copy2(caption_txt, train_caption_txt)
+            logger.info(f"从caption目录复制caption.txt到train目录根目录: {caption_txt} -> {train_caption_txt}")
+        else:
+            # 从数据集根目录复制
+            root_txt = os.path.join(dataset_path, "caption.txt")
+            if os.path.exists(root_txt):
+                shutil.copy2(root_txt, train_caption_txt)
+                logger.info(f"从数据集根目录复制caption.txt到train目录根目录: {root_txt} -> {train_caption_txt}")
+            else:
+                # 如果scenes目录也有caption.txt，也复制一份
+                scenes_txt = os.path.join(scenes_dir, "caption.txt")
+                if os.path.exists(scenes_txt):
+                    shutil.copy2(scenes_txt, train_caption_txt)
+                    logger.info(f"从scenes目录复制caption.txt到train目录根目录: {scenes_txt} -> {train_caption_txt}")
+                else:
+                    # 如果train/caption目录有caption.txt，也复制一份
+                    train_caption_dir_txt = os.path.join(train_dir, "caption", "caption.txt")
+                    if os.path.exists(train_caption_dir_txt):
+                        shutil.copy2(train_caption_dir_txt, train_caption_txt)
+                        logger.info(f"从train/caption目录复制caption.txt到train目录根目录: {train_caption_dir_txt} -> {train_caption_txt}")
+                    else:
+                        logger.error(f"错误: 在所有可能的位置都找不到caption.txt文件，预处理可能会失败")
+    
+    # 检查并输出确认
+    if os.path.exists(train_caption_txt):
+        logger.info(f"确认: train目录根目录下存在caption.txt文件: {train_caption_txt}")
+        # 显示train目录根目录下的caption.txt内容
+        try:
+            with open(train_caption_txt, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+                logger.info(f"train目录根目录下caption.txt的前5行内容: {lines[:5]}")
+                logger.info(f"train目录根目录下caption.txt共有{len(lines)}行")
+        except Exception as e:
+            logger.error(f"读取train目录中caption.txt内容时出错: {str(e)}")
     
     logger.info("文件复制完成，将从train目录获取预处理所需的输入文件")
     if hasattr(status, 'update'):
