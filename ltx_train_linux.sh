@@ -8,9 +8,13 @@ export LC_ALL=C.UTF-8
 
 # 设置环境变量
 export PYTHONIOENCODING=utf-8
+# 使用本地模型时保持离线模式
 export TRANSFORMERS_OFFLINE=1
 export HF_HUB_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
+
+# 定义本地LLaVA模型路径
+LLAVA_MODEL_PATH="$SCRIPT_DIR/models/LLaVA-NeXT-Video-7B-hf"
 
 # 设置Python路径
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
@@ -31,6 +35,13 @@ SCRIPTS_DIR="$PROJECT_DIR/scripts"
 DATA_DIR="$PROJECT_DIR/train_date"
 CONFIGS_DIR="$PROJECT_DIR/configs"
 DIFFUSERS_MODEL_PATH="$PROJECT_DIR/models/LTX-Video-0.9.7-diffusers"
+
+# 检查LLaVA模型是否已下载
+if [ ! -d "$LLAVA_MODEL_PATH" ]; then
+    echo -e "${YELLOW}警告: LLaVA-NeXT-Video-7B-hf模型未下载。${NC}"
+    echo -e "${YELLOW}请先运行 'python download_llava_model.py' 下载模型${NC}"
+    echo -e "${YELLOW}或者在标注时选择使用Moonshot API${NC}"
+fi
 
 # 预设分辨率列表
 declare -a RESOLUTIONS_DIMS=(
@@ -819,13 +830,61 @@ except Exception as e:
                 echo -e "${YELLOW}警告: 检测到您的PyTorch没有CUDA支持，本地模型标注可能非常缓慢。建议安装CUDA支持的PyTorch或切换到Moonshot API标注。${NC}"
             fi
             
+            # 检查本地模型是否存在
+            if [ ! -d "$LLAVA_MODEL_PATH" ]; then
+                echo -e "${RED}错误: LLaVA-NeXT-Video-7B-hf模型未下载。${NC}"
+                echo -e "${YELLOW}请先运行 'python download_llava_model.py' 下载模型，或选择使用Moonshot API${NC}"
+                
+                echo -e "是否切换到Moonshot API继续? [Y/n]"
+                read -r switch_to_moonshot
+                
+                if [[ ! "$switch_to_moonshot" =~ ^[Nn]$ ]]; then
+                    use_moonshot=true
+                    echo -e "${YELLOW}切换到Moonshot API进行标注${NC}"
+                    
+                    # 检查API密钥文件是否存在
+                    api_key_file="$PROJECT_DIR/api_key.txt"
+                    if [ ! -f "$api_key_file" ]; then
+                        # 如果API密钥文件不存在，创建一个提示用户输入的文件
+                        {
+                            echo "# 请将您的Moonshot API密钥粘贴在下面一行，然后保存文件"
+                            echo "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                            echo "# 请到 [https://platform.moonshot.cn/docs/pricing/chat](https://platform.moonshot.cn/docs/pricing/chat) 申请API密钥"
+                        } > "$api_key_file"
+                        echo -e "${RED}未找到API密钥文件。已创建模板文件: $api_key_file${NC}"
+                        echo -e "${RED}请在此文件中输入您的Moonshot API密钥并再次运行标注。${NC}"
+                        return 1
+                    fi
+                    
+                    # 使用Moonshot API标注脚本
+                    caption_cmd=(
+                        python "$SCRIPTS_DIR/caption_with_moonshot.py"
+                        "$input_dir"  # 使用选定的输入目录
+                        "--output" "$output_json"
+                    )
+                    return
+                else
+                    echo -e "${RED}无法继续，请先下载LLaVA模型${NC}"
+                    return 1
+                fi
+            fi
+            
+            # 暂时禁用离线模式以使用本地模型
+            export TRANSFORMERS_OFFLINE=0
+            export HF_HUB_OFFLINE=0
+            export HF_DATASETS_OFFLINE=0
+            
             # 使用本地LLaVA模型标注脚本
             caption_cmd=(
                 python "$SCRIPTS_DIR/caption_videos.py"
                 "$input_dir"  # 使用选定的输入目录
                 "--output" "$output_json"
-                "--captioner-type" "llava_next_7b"  # 使用默认的LLaVA-NeXT-7B模型
+                "--captioner-type" "llava_next_7b"  # 使用LLaVA-NeXT-7B模型
+                "--model-path" "$LLAVA_MODEL_PATH"  # 指定本地模型路径
             )
+            
+            # 标注完成后恢复离线模式
+            trap 'export TRANSFORMERS_OFFLINE=1; export HF_HUB_OFFLINE=1; export HF_DATASETS_OFFLINE=1' EXIT
         fi
         
         # 根据选择的标注方法显示相应的命令日志
