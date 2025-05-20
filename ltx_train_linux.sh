@@ -6,11 +6,15 @@
 export LANG=C.UTF-8
 export LC_ALL=C.UTF-8
 
-# 设置环境变量强制离线模式
-export PYTHONIOENCODING="utf8"
-export TRANSFORMERS_OFFLINE="1"
-export HF_HUB_OFFLINE="1"
-export HF_DATASETS_OFFLINE="1"
+# 设置环境变量
+export PYTHONIOENCODING=utf-8
+export TRANSFORMERS_OFFLINE=1
+export HF_HUB_OFFLINE=1
+export HF_DATASETS_OFFLINE=1
+
+# 设置Python路径
+SCRIPT_DIR=$(dirname "$(realpath "$0")")
+export PYTHONPATH="$SCRIPT_DIR:$SCRIPT_DIR/src:$PYTHONPATH"
 
 # 颜色定义
 RED='\033[0;31m'
