@@ -13,12 +13,21 @@ export TRANSFORMERS_OFFLINE=1
 export HF_HUB_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 
+# 设置Python路径 - 首先设置这个，因为其他变量依赖它
+SCRIPT_DIR=$(dirname "$(realpath "$0")")
+export PYTHONPATH="$SCRIPT_DIR:$SCRIPT_DIR/src:$PYTHONPATH"
+
 # 定义本地LLaVA模型路径
 LLAVA_MODEL_PATH="$SCRIPT_DIR/models/LLaVA-NeXT-Video-7B-hf"
 
-# 设置Python路径
-SCRIPT_DIR=$(dirname "$(realpath "$0")")
-export PYTHONPATH="$SCRIPT_DIR:$SCRIPT_DIR/src:$PYTHONPATH"
+# 确保src/ltxv_trainer/model_paths.json文件存在
+mkdir -p "$SCRIPT_DIR/src/ltxv_trainer"
+MODEL_PATHS_FILE="$SCRIPT_DIR/src/ltxv_trainer/model_paths.json"
+if [ ! -f "$MODEL_PATHS_FILE" ]; then
+    # 创建包含模型路径映射的JSON文件
+    echo "{\"llava-hf/LLaVA-NeXT-Video-7B-hf\": \"$LLAVA_MODEL_PATH\"}" > "$MODEL_PATHS_FILE"
+    echo "已创建模型路径映射文件: $MODEL_PATHS_FILE"
+fi
 
 # 颜色定义
 RED='\033[0;31m'
@@ -36,11 +45,13 @@ DATA_DIR="$PROJECT_DIR/train_date"
 CONFIGS_DIR="$PROJECT_DIR/configs"
 DIFFUSERS_MODEL_PATH="$PROJECT_DIR/models/LTX-Video-0.9.7-diffusers"
 
-# 检查LLaVA模型是否已下载
-if [ ! -d "$LLAVA_MODEL_PATH" ]; then
-    echo -e "${YELLOW}警告: LLaVA-NeXT-Video-7B-hf模型未下载。${NC}"
+# 检查LLaVA模型是否已下载且完整
+if [ ! -d "$LLAVA_MODEL_PATH" ] || [ ! -f "$LLAVA_MODEL_PATH/config.json" ] || [ ! -f "$LLAVA_MODEL_PATH/tokenizer.json" ]; then
+    echo -e "${YELLOW}警告: LLaVA-NeXT-Video-7B-hf模型未下载或不完整。${NC}"
     echo -e "${YELLOW}请先运行 'python download_llava_model.py' 下载模型${NC}"
     echo -e "${YELLOW}或者在标注时选择使用Moonshot API${NC}"
+else
+    echo -e "${GREEN}检测到有效的LLaVA-NeXT-Video-7B-hf模型${NC}"
 fi
 
 # 预设分辨率列表
@@ -830,9 +841,9 @@ except Exception as e:
                 echo -e "${YELLOW}警告: 检测到您的PyTorch没有CUDA支持，本地模型标注可能非常缓慢。建议安装CUDA支持的PyTorch或切换到Moonshot API标注。${NC}"
             fi
             
-            # 检查本地模型是否存在
-            if [ ! -d "$LLAVA_MODEL_PATH" ]; then
-                echo -e "${RED}错误: LLaVA-NeXT-Video-7B-hf模型未下载。${NC}"
+            # 检查本地模型是否存在且完整
+            if [ ! -d "$LLAVA_MODEL_PATH" ] || [ ! -f "$LLAVA_MODEL_PATH/config.json" ] || [ ! -f "$LLAVA_MODEL_PATH/tokenizer.json" ]; then
+                echo -e "${RED}错误: LLaVA-NeXT-Video-7B-hf模型未下载或不完整。${NC}"
                 echo -e "${YELLOW}请先运行 'python download_llava_model.py' 下载模型，或选择使用Moonshot API${NC}"
                 
                 echo -e "是否切换到Moonshot API继续? [Y/n]"
@@ -869,6 +880,14 @@ except Exception as e:
                 fi
             fi
             
+            # 确保model_paths.json映射文件存在且正确
+            MODEL_PATHS_FILE="$SCRIPT_DIR/src/ltxv_trainer/model_paths.json"
+            if [ ! -f "$MODEL_PATHS_FILE" ]; then
+                mkdir -p "$SCRIPT_DIR/src/ltxv_trainer"
+                echo "{\"llava-hf/LLaVA-NeXT-Video-7B-hf\": \"$LLAVA_MODEL_PATH\"}" > "$MODEL_PATHS_FILE"
+                echo -e "${GREEN}已创建模型路径映射文件${NC}"
+            fi
+            
             # 暂时禁用离线模式以使用本地模型
             export TRANSFORMERS_OFFLINE=0
             export HF_HUB_OFFLINE=0
@@ -876,11 +895,11 @@ except Exception as e:
             
             # 使用本地LLaVA模型标注脚本
             caption_cmd=(
-                python "$SCRIPTS_DIR/caption_videos.py"
+                python "$SCRIPTS_DIR/caption_videos_with_path.py"
                 "$input_dir"  # 使用选定的输入目录
                 "--output" "$output_json"
                 "--captioner-type" "llava_next_7b"  # 使用LLaVA-NeXT-7B模型
-                "--model-path" "$LLAVA_MODEL_PATH"  # 指定本地模型路径
+                "--model-path" "$LLAVA_MODEL_PATH"  # 现在支持直接传递模型路径
             )
             
             # 标注完成后恢复离线模式
@@ -1185,26 +1204,60 @@ except Exception as e:
         fi
                 
         # 创建media_path.txt文件，预处理脚本需要这个文件来找到视频文件
-        # 首先找到视频文件
-        video_filenames=()
+        # 收集实际存在的视频文件及其完整路径
+        video_paths=()
         for dir in "$dataset_path" "$caption_dir" "$scenes_dir"; do
             if [ -d "$dir" ]; then
                 while IFS= read -r -d '' file; do
-                    video_filenames+=("$(basename "$file")")
+                    # 保存完整路径而不仅仅是文件名
+                    video_paths+=("$file")
                 done < <(find "$dir" -maxdepth 1 -type f \( -name "*.mp4" -o -name "*.avi" -o -name "*.mov" -o -name "*.mkv" \) -print0)
             fi
         done
         
-        # 删除重复项
-        unique_video_filenames=($(echo "${video_filenames[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' '))
+        # 创建临时数组用于去重
+        declare -A unique_paths
+        unique_video_paths=()
         
-        # 创建media_path.txt文件
+        # 用关联数组去重
+        for path in "${video_paths[@]}"; do
+            if [ -z "${unique_paths[$path]}" ]; then
+                unique_paths[$path]=1
+                unique_video_paths+=("$path")
+            fi
+        done
+        
+        # 确保 dataset_path 目录中有所有视频文件的副本
+        echo -e "确保所有视频文件都在数据集根目录中..."
+        for path in "${unique_video_paths[@]}"; do
+            filename=$(basename "$path")
+            target_path="$dataset_path/$filename"
+            
+            # 如果视频文件不在数据集根目录，复制过去
+            if [ ! -f "$target_path" ] || [ "$path" -nt "$target_path" ]; then
+                cp "$path" "$target_path"
+                echo "复制视频到数据集根目录: $filename"
+            fi
+        done
+        
+        # 收集数据集根目录中所有视频文件
+        root_videos=()
+        while IFS= read -r -d '' file; do
+            root_videos+=("$file")
+        done < <(find "$dataset_path" -maxdepth 1 -type f \( -name "*.mp4" -o -name "*.avi" -o -name "*.mov" -o -name "*.mkv" \) -print0)
+        
+        # 创建media_path.txt文件，确保使用完整路径
         media_path_txt="$dataset_path/media_path.txt"
         > "$media_path_txt"  # 清空文件
-        for filename in "${unique_video_filenames[@]}"; do
-            echo "$filename" >> "$media_path_txt"
-        done
-        echo -e "已创建media_path.txt文件，包含${#unique_video_filenames[@]}个视频文件路径"
+        
+        if [ ${#root_videos[@]} -gt 0 ]; then
+            for video_path in "${root_videos[@]}"; do
+                echo "$video_path" >> "$media_path_txt"
+            done
+            echo -e "已创建media_path.txt文件，包含${#root_videos[@]}个完整视频文件路径"
+        else
+            echo -e "${RED}警告: 未找到视频文件在数据集根目录，media_path.txt可能为空${NC}"
+        fi
         
         # 使用预处理脚本
         preprocess_script=""
@@ -1352,7 +1405,7 @@ try:
         config_data['validation']['video_dims'] = [int(dims[0]), int(dims[1]), frames_val]
     
     # 更新输出目录
-    config_data['output_dir'] = f'outputs/{basename}_lora_r{$rank}_int8-quanto'
+    config_data['output_dir'] = 'outputs/' + '$basename' + '_lora_r' + str($rank) + '_int8-quanto'
     
     # 保存修改后的配置
     with open('$temp_config_path', 'w', encoding='utf-8') as f:
