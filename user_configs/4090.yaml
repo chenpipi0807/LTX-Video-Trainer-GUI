@@ -5,34 +5,34 @@ model:
   training_mode: lora
   load_checkpoint: null
 lora:
-  rank: 8
-  alpha: 8
-  dropout: 0
+  rank: 8 # LoRA秩
+  alpha: 8 # LoRA alpha
+  dropout: 0 # LoRA dropout
   target_modules:
-  - to_k
+  - to_k # 目标模块
   - to_q
   - to_v
   - to_out.0
 optimization:
-  learning_rate: 0.0002
-  steps: 3000
-  batch_size: 1
-  gradient_accumulation_steps: 1
-  max_grad_norm: 1
-  optimizer_type: adamw8bit
-  scheduler_type: linear
-  scheduler_params: {}
+  learning_rate: 0.0002 # 学习率
+  steps: 3000 # 训练步数
+  batch_size: 1 # 批处理大小
+  gradient_accumulation_steps: 1 # 梯度累积步数
+  max_grad_norm: 1 # 梯度范数
+  optimizer_type: adamw8bit # 优化器类型
+  scheduler_type: linear # 学习率调度器类型
+  scheduler_params: {} # 学习率调度器参数
   enable_gradient_checkpointing: true
   first_frame_conditioning_p: 0.5
 acceleration:
-  mixed_precision_mode: bf16
-  quantization: int8-quanto
-  load_text_encoder_in_8bit: true
-  compile_with_inductor: false
-  compilation_mode: reduce-overhead
+  mixed_precision_mode: bf16 # 混合精度模式
+  quantization: int8-quanto # 量化模式
+  load_text_encoder_in_8bit: true # 是否在8位下加载文本编码器
+  compile_with_inductor: false # 是否使用Inductor编译
+  compilation_mode: reduce-overhead # 编译模式
 data:
   preprocessed_data_root: APT_scenes
-  num_dataloader_workers: 1
+  num_dataloader_workers: 1 # 数据加载器工作者数量
 validation:
   prompts:
   - APT a female character with blonde hair and a blue and white outfit holding a
@@ -42,19 +42,19 @@ validation:
     room
   negative_prompt: worst quality, inconsistent motion, blurry, jittery, distorted
   video_dims:
-  - 416
-  - 704
-  - 97
-  seed: 42
-  inference_steps: 300
-  interval: null
+  - 416 # 4090推荐分辨率
+  - 704 # 4090推荐分辨率
+  - 97 # 4090推荐帧数
+  seed: 996
+  inference_steps: 25 # 生成视频的步数
+  interval: null # 生成视频的间隔步数
   videos_per_prompt: 1
   guidance_scale: 3.5
 checkpoints:
-  interval: 5
+  interval: 300 # 保存检查点的间隔步数
   keep_last_n: -1
 flow_matching:
-  timestep_sampling_mode: shifted_logit_normal
+  timestep_sampling_mode: shifted_logit_normal # 时间步采样模式
   timestep_sampling_params: {}
 seed: 42
 output_dir: outputs/APT_lora_r64_int8-quanto
