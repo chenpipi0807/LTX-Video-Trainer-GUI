@@ -143,7 +143,7 @@ function run_command() {
     
     # 判断命令类型
     if [[ "$cmd_str" == *"preprocess_zero_workers.py"* ]] || [[ "$cmd_str" == *"fix_resolution_wrapper.py"* ]] || 
-       [[ "$cmd_str" == *"train.py"* ]] || [[ "$cmd_str" == *"caption_videos.py"* ]]; then
+       [[ "$cmd_str" == *"train.py"* ]] || [[ "$cmd_str" == *"caption_videos.py"* ]] || [[ "$cmd_str" == *"caption_with_moonshot.py"* ]]; then
         # 需要实时输出的命令，直接执行
         "${cmd[@]}"
         exit_code=$?
@@ -154,6 +154,8 @@ function run_command() {
             elif [[ "$cmd_str" == *"train.py"* ]]; then
                 echo -e "${GREEN}训练命令执行成功！${NC}"
             elif [[ "$cmd_str" == *"caption_videos.py"* ]]; then
+                echo -e "${GREEN}标注命令执行成功！${NC}"
+            elif [[ "$cmd_str" == *"caption_with_moonshot.py"* ]]; then
                 echo -e "${GREEN}标注命令执行成功！${NC}"
             else
                 echo -e "${GREEN}命令执行成功！${NC}"
@@ -771,6 +773,14 @@ except Exception as e:
             fi
         fi
         
+        # 检查raw_videos_dir目录中是否有视频
+        raw_video_files=()  
+        if [ -d "$raw_videos_dir" ]; then
+            while IFS= read -r -d '' file; do
+                raw_video_files+=($file)
+            done < <(find "$raw_videos_dir" -type f \( -name "*.mp4" -o -name "*.avi" -o -name "*.mov" -o -name "*.mkv" \) -print0)  
+        fi
+
         # 选择适当的输入目录
         input_dir=""
         if [ ${#caption_videos[@]} -gt 0 ]; then
@@ -779,6 +789,9 @@ except Exception as e:
         elif [ ${#scene_videos[@]} -gt 0 ]; then
             input_dir="$scenes_dir"
             echo -e "${YELLOW}警告: 使用scenes目录中的视频文件进行标注，未找到调整分辨率后的视频${NC}"
+        elif [ ${#raw_video_files[@]} -gt 0 ]; then
+            input_dir="$raw_videos_dir"
+            echo -e "${YELLOW}警告: 使用raw_videos目录中的视频文件进行标注，其他位置未找到视频${NC}"
         else
             input_dir="$dataset_path"
             echo -e "${YELLOW}警告: 使用数据集根目录进行标注，未找到任何可用视频${NC}"
@@ -895,7 +908,7 @@ except Exception as e:
             
             # 使用本地LLaVA模型标注脚本
             caption_cmd=(
-                python "$SCRIPTS_DIR/caption_videos_with_path.py"
+                python "$SCRIPTS_DIR/caption_videos.py"
                 "$input_dir"  # 使用选定的输入目录
                 "--output" "$output_json"
                 "--captioner-type" "llava_next_7b"  # 使用LLaVA-NeXT-7B模型
@@ -1206,7 +1219,7 @@ except Exception as e:
         # 创建media_path.txt文件，预处理脚本需要这个文件来找到视频文件
         # 收集实际存在的视频文件及其完整路径
         video_paths=()
-        for dir in "$dataset_path" "$caption_dir" "$scenes_dir"; do
+        for dir in "$dataset_path" "$caption_dir" "$scenes_dir" "$raw_videos_dir"; do
             if [ -d "$dir" ]; then
                 while IFS= read -r -d '' file; do
                     # 保存完整路径而不仅仅是文件名
