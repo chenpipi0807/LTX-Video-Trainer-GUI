@@ -2168,6 +2168,25 @@ sys.exit(return_code)
             yaml_data['data']['preprocessed_data_root'] = abs_precomputed_path
             summary += f"\n预处理数据路径: {abs_precomputed_path}"
         
+        # 1.5 更新输出目录 - 确保使用正确的项目名称
+        if yaml_data and 'output_dir' in yaml_data:
+            # 获取当前配置中的量化后缀（如果有）
+            quant_suffix = ""
+            if 'acceleration' in yaml_data and 'quantization' in yaml_data['acceleration'] and yaml_data['acceleration']['quantization']:
+                quant_suffix = f"_{yaml_data['acceleration']['quantization']}"
+            
+            # 获取当前LoRA秩
+            lora_rank = 8  # 默认值
+            if 'lora' in yaml_data and 'rank' in yaml_data['lora']:
+                lora_rank = yaml_data['lora']['rank']
+            
+            # 使用当前项目名称构建新的输出目录
+            new_output_dir = f"outputs/{basename}_lora_r{lora_rank}{quant_suffix}"
+            old_output_dir = yaml_data['output_dir']
+            yaml_data['output_dir'] = new_output_dir
+            logger.info(f"更新输出目录: {old_output_dir} -> {new_output_dir}")
+            summary += f"\n输出目录: {new_output_dir} (原值: {old_output_dir})"
+            
         # 2. 特别处理 - 更新验证视频尺寸参数
         if yaml_data and 'validation' in yaml_data and 'video_dims' in yaml_data['validation']:
             # 处理分辨率字符串，提取宽度和高度
