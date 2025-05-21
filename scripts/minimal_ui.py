@@ -816,125 +816,6 @@ def run_pipeline(basename, dims, frames, config_name, rank, split_scenes=True, c
                         status.update(value=f"分场景完成，生成了{len(scene_videos)}个场景视频，并已复制到caption目录")
                 else:
                     logger.info("所有视频文件已存在于caption目录中，无需复制")
-                
-                # ======== 步骤3.1: 调整视频分辨率 ========
-                logger.info("\n=== 步骤3.1: 调整视频分辨率 ===")
-                if hasattr(status, 'update'):
-                    current_status = status.value if hasattr(status, 'value') else ""
-                    status.update(value=current_status + "\n\n=== 步骤3.1: 调整视频分辨率 ===")
-                
-                # 清理分辨率字符串，提取数字部分
-                clean_dims = dims
-                if ']' in clean_dims:
-                    clean_dims = clean_dims.split(']')[-1].strip()
-                
-                # 创建调整分辨率后的目录
-                resized_dir = os.path.join(dataset_path, "caption_resized")
-                os.makedirs(resized_dir, exist_ok=True)
-                
-                # 检查是否已经有调整过大小的视频
-                resized_videos = []
-                for ext in [".mp4", ".avi", ".mov", ".mkv"]:
-                    resized_videos.extend(list(Path(resized_dir).glob(f"*{ext}")))
-                
-                if resized_videos and len(resized_videos) >= len(scene_videos):
-                    logger.info(f"发现{len(resized_videos)}个调整过分辨率的视频文件，跳过分辨率调整步骤")
-                    if hasattr(status, 'update'):
-                        current_status = status.value if hasattr(status, 'value') else ""
-                        status.update(value=current_status + f"\n使用现有的{len(resized_videos)}个调整过分辨率的视频")
-                else:
-                    # 执行分辨率调整
-                    logger.info(f"开始调整视频分辨率至 {clean_dims}")
-                    if hasattr(status, 'update'):
-                        current_status = status.value if hasattr(status, 'value') else ""
-                        status.update(value=current_status + f"\n开始调整视频分辨率至 {clean_dims}...")
-                    
-                    resize_cmd = [
-                        sys.executable,
-                        os.path.join(SCRIPTS_DIR, "resize_videos.py"),
-                        caption_dir,
-                        "--output-dir", resized_dir,
-                        "--target-size", clean_dims,
-                        "--keep-aspect-ratio"
-                    ]
-                    
-                    logger.info(f"执行分辨率调整命令: {' '.join(resize_cmd)}")
-                    resize_output = run_command(resize_cmd, status)
-                    
-                    # 检查是否成功
-                    resized_videos = []
-                    for ext in [".mp4", ".avi", ".mov", ".mkv"]:
-                        resized_videos.extend(list(Path(resized_dir).glob(f"*{ext}")))
-                    
-                    if resized_videos:
-                        logger.info(f"分辨率调整完成，生成了{len(resized_videos)}个调整后的视频")
-                        if hasattr(status, 'update'):
-                            current_status = status.value if hasattr(status, 'value') else ""
-                            status.update(value=current_status + f"\n分辨率调整完成，生成了{len(resized_videos)}个调整后的视频")
-                    else:
-                        logger.error("分辨率调整失败，未生成视频文件")
-                        if hasattr(status, 'update'):
-                            current_status = status.value if hasattr(status, 'value') else ""
-                            status.update(value=current_status + "\n错误: 分辨率调整失败，将使用原始视频继续")
-                        # 如果调整失败，使用原始视频目录
-                        resized_dir = caption_dir
-                
-                # ======== 步骤3.2: 提取视频帧 ========
-                logger.info("\n=== 步骤3.2: 提取视频帧 ===")
-                if hasattr(status, 'update'):
-                    current_status = status.value if hasattr(status, 'value') else ""
-                    status.update(value=current_status + "\n\n=== 步骤3.2: 提取视频帧 ===")
-                
-                # 创建帧提取目录
-                frames_dir = os.path.join(dataset_path, "frames")
-                os.makedirs(frames_dir, exist_ok=True)
-                
-                # 检查是否已有提取的帧
-                existing_frame_dirs = [d for d in os.listdir(frames_dir) if os.path.isdir(os.path.join(frames_dir, d))]
-                if existing_frame_dirs and len(existing_frame_dirs) >= len(resized_videos):
-                    logger.info(f"发现{len(existing_frame_dirs)}个视频已提取帧，跳过帧提取步骤")
-                    if hasattr(status, 'update'):
-                        current_status = status.value if hasattr(status, 'value') else ""
-                        status.update(value=current_status + f"\n使用现有的{len(existing_frame_dirs)}个视频帧目录")
-                else:
-                    # 执行帧提取
-                    frames_count = int(frames)  # 转换为整数
-                    logger.info(f"开始从每个视频提取{frames_count}帧")
-                    if hasattr(status, 'update'):
-                        current_status = status.value if hasattr(status, 'value') else ""
-                        status.update(value=current_status + f"\n开始从每个视频提取{frames_count}帧...")
-                    
-                    extract_cmd = [
-                        sys.executable,
-                        os.path.join(SCRIPTS_DIR, "extract_frames.py"),
-                        resized_dir,  # 从调整分辨率后的目录提取帧
-                        "--output-dir", frames_dir,
-                        "--num-frames", str(frames_count),
-                        "--mode", "uniform"
-                    ]
-                    
-                    logger.info(f"执行帧提取命令: {' '.join(extract_cmd)}")
-                    extract_output = run_command(extract_cmd, status)
-                    
-                    # 检查是否成功
-                    existing_frame_dirs = [d for d in os.listdir(frames_dir) if os.path.isdir(os.path.join(frames_dir, d))]
-                    if existing_frame_dirs:
-                        logger.info(f"帧提取完成，生成了{len(existing_frame_dirs)}个视频帧目录")
-                        if hasattr(status, 'update'):
-                            current_status = status.value if hasattr(status, 'value') else ""
-                            status.update(value=current_status + f"\n帧提取完成，生成了{len(existing_frame_dirs)}个视频帧目录")
-                    else:
-                        logger.error("帧提取失败，未生成帧目录")
-                        if hasattr(status, 'update'):
-                            current_status = status.value if hasattr(status, 'value') else ""
-                            status.update(value=current_status + "\n错误: 帧提取失败，将使用调整后的视频继续标注")
-                        # 继续使用调整后的视频目录
-                        # 不需要额外操作，因为标注脚本仍将使用resized_dir中的视频
-                
-                # 使用调整分辨率后的目录做为标注的输入目录
-                caption_input_dir = resized_dir
-                logger.info(f"将使用{caption_input_dir}目录中的调整分辨率后的视频文件进行标注")
-                    
         else:
             if not raw_videos:
                 logger.info(f"未找到原始视频文件，跳过分场景步骤")
@@ -972,6 +853,196 @@ def run_pipeline(basename, dims, frames, config_name, rank, split_scenes=True, c
                         if hasattr(status, 'update'):
                             current_status = status.value if hasattr(status, 'value') else ""
                             status.update(value=current_status + f"\n已复制{copied_count}个现有场景视频到caption目录")
+            
+            # 如果没有发现任何现有视频，但有raw_videos，自动复制到caption目录
+            if not os.path.exists(os.path.join(dataset_path, "caption")) or not any(os.listdir(os.path.join(dataset_path, "caption"))):
+                caption_dir = os.path.join(dataset_path, "caption")
+                os.makedirs(caption_dir, exist_ok=True)
+                
+                raw_videos_dir = os.path.join(dataset_path, "raw_videos")
+                if os.path.exists(raw_videos_dir):
+                    raw_videos = []
+                    for ext in [".mp4", ".avi", ".mov", ".mkv"]:
+                        raw_videos.extend(list(Path(raw_videos_dir).glob(f"*{ext}")))
+                    
+                    if raw_videos:
+                        logger.info(f"未发现既存视频，将从raw_videos复制{len(raw_videos)}个视频到caption目录")
+                        copied_count = 0
+                        for video_file in raw_videos:
+                            video_filename = os.path.basename(video_file)
+                            caption_video_path = os.path.join(caption_dir, video_filename)
+                            
+                            if not os.path.exists(caption_video_path):
+                                shutil.copy2(str(video_file), caption_video_path)
+                                copied_count += 1
+                                logger.info(f"复制原始视频到caption目录: {video_filename}")
+                        
+                        if copied_count > 0:
+                            logger.info(f"已复制{copied_count}个原始视频到caption目录")
+                            if hasattr(status, 'update'):
+                                current_status = status.value if hasattr(status, 'value') else ""
+                                status.update(value=current_status + f"\n已复制{copied_count}个原始视频到caption目录")
+    
+    # ======== 步骤3.1: 调整视频分辨率 ========
+    # 注意：这部分代码已从split_scenes条件块中移出，确保无论是否执行分场景都会调整分辨率
+    logger.info("\n=== 步骤3.1: 调整视频分辨率 ===")
+    if hasattr(status, 'update'):
+        current_status = status.value if hasattr(status, 'value') else ""
+        status.update(value=current_status + "\n\n=== 步骤3.1: 调整视频分辨率 ===")
+    
+    # 首先确保caption目录存在并包含视频文件
+    caption_dir = os.path.join(dataset_path, "caption")
+    os.makedirs(caption_dir, exist_ok=True)
+    
+    # 检查caption目录是否有视频文件
+    caption_videos = []
+    for ext in [".mp4", ".avi", ".mov", ".mkv"]:
+        caption_videos.extend(list(Path(caption_dir).glob(f"*{ext}")))
+    
+    # 如果caption目录没有视频，尝试从dataset_path直接复制
+    if not caption_videos:
+        dataset_videos = []
+        for ext in [".mp4", ".avi", ".mov", ".mkv"]:
+            dataset_videos.extend([f for f in list(Path(dataset_path).glob(f"*{ext}")) 
+                               if os.path.dirname(f) == dataset_path])  # 只获取根目录的视频
+        
+        if dataset_videos:
+            logger.info(f"从数据集根目录复制{len(dataset_videos)}个视频到caption目录")
+            for video_file in dataset_videos:
+                video_filename = os.path.basename(video_file)
+                caption_video_path = os.path.join(caption_dir, video_filename)
+                if not os.path.exists(caption_video_path):
+                    shutil.copy2(str(video_file), caption_video_path)
+                    logger.info(f"复制数据集根目录视频到caption目录: {video_filename}")
+            
+            # 更新caption_videos列表
+            for ext in [".mp4", ".avi", ".mov", ".mkv"]:
+                caption_videos.extend(list(Path(caption_dir).glob(f"*{ext}")))
+    
+    # 如果依然没有视频，警告用户
+    if not caption_videos:
+        logger.warning(f"警告: caption目录中没有找到视频文件，预处理可能会失败")
+        if hasattr(status, 'update'):
+            current_status = status.value if hasattr(status, 'value') else ""
+            status.update(value=current_status + "\n警告: 没有找到视频文件，请确保将视频放入数据集目录或raw_videos目录")
+    
+    # 清理分辨率字符串，提取数字部分
+    clean_dims = dims
+    if ']' in clean_dims:
+        clean_dims = clean_dims.split(']')[-1].strip()
+    
+    # 创建调整分辨率后的目录
+    resized_dir = os.path.join(dataset_path, "caption_resized")
+    os.makedirs(resized_dir, exist_ok=True)
+    
+    # 检查是否已经有调整过大小的视频
+    resized_videos = []
+    for ext in [".mp4", ".avi", ".mov", ".mkv"]:
+        resized_videos.extend(list(Path(resized_dir).glob(f"*{ext}")))
+    
+    if resized_videos and len(resized_videos) >= len(caption_videos) and caption_videos:
+        logger.info(f"发现{len(resized_videos)}个调整过分辨率的视频文件，跳过分辨率调整步骤")
+        if hasattr(status, 'update'):
+            current_status = status.value if hasattr(status, 'value') else ""
+            status.update(value=current_status + f"\n使用现有的{len(resized_videos)}个调整过分辨率的视频")
+    elif caption_videos:  # 只有在有视频文件时才执行分辨率调整
+        # 执行分辨率调整
+        logger.info(f"开始调整视频分辨率至 {clean_dims}")
+        if hasattr(status, 'update'):
+            current_status = status.value if hasattr(status, 'value') else ""
+            status.update(value=current_status + f"\n开始调整视频分辨率至 {clean_dims}...")
+        
+        resize_cmd = [
+            sys.executable,
+            os.path.join(SCRIPTS_DIR, "resize_videos.py"),
+            caption_dir,
+            "--output-dir", resized_dir,
+            "--target-size", clean_dims,
+            "--keep-aspect-ratio"
+        ]
+        
+        logger.info(f"执行分辨率调整命令: {' '.join(resize_cmd)}")
+        resize_output = run_command(resize_cmd, status)
+        
+        # 检查是否成功
+        resized_videos = []
+        for ext in [".mp4", ".avi", ".mov", ".mkv"]:
+            resized_videos.extend(list(Path(resized_dir).glob(f"*{ext}")))
+        
+        if resized_videos:
+            logger.info(f"分辨率调整完成，生成了{len(resized_videos)}个调整后的视频")
+            if hasattr(status, 'update'):
+                current_status = status.value if hasattr(status, 'value') else ""
+                status.update(value=current_status + f"\n分辨率调整完成，生成了{len(resized_videos)}个调整后的视频")
+        else:
+            logger.error("分辨率调整失败，未生成视频文件")
+            if hasattr(status, 'update'):
+                current_status = status.value if hasattr(status, 'value') else ""
+                status.update(value=current_status + "\n错误: 分辨率调整失败，将使用原始视频继续")
+            # 如果调整失败，使用原始视频目录
+            resized_dir = caption_dir
+    else:
+        logger.warning("没有找到视频文件，跳过分辨率调整步骤")
+    
+    # ======== 步骤3.2: 提取视频帧 ========
+    logger.info("\n=== 步骤3.2: 提取视频帧 ===")
+    if hasattr(status, 'update'):
+        current_status = status.value if hasattr(status, 'value') else ""
+        status.update(value=current_status + "\n\n=== 步骤3.2: 提取视频帧 ===")
+    
+    # 创建帧提取目录
+    frames_dir = os.path.join(dataset_path, "frames")
+    os.makedirs(frames_dir, exist_ok=True)
+    
+    # 决定使用哪个目录作为帧提取的输入
+    input_for_frames = resized_dir if resized_videos else caption_dir
+    input_videos = resized_videos if resized_videos else caption_videos
+    
+    # 检查是否已有提取的帧
+    existing_frame_dirs = [d for d in os.listdir(frames_dir) if os.path.isdir(os.path.join(frames_dir, d))]
+    if existing_frame_dirs and len(existing_frame_dirs) >= len(input_videos) and input_videos:
+        logger.info(f"发现{len(existing_frame_dirs)}个视频已提取帧，跳过帧提取步骤")
+        if hasattr(status, 'update'):
+            current_status = status.value if hasattr(status, 'value') else ""
+            status.update(value=current_status + f"\n使用现有的{len(existing_frame_dirs)}个视频帧目录")
+    elif input_videos:  # 只有在有视频文件时才执行帧提取
+        # 执行帧提取
+        frames_count = int(frames)  # 转换为整数
+        logger.info(f"开始从每个视频提取{frames_count}帧，源目录: {input_for_frames}")
+        if hasattr(status, 'update'):
+            current_status = status.value if hasattr(status, 'value') else ""
+            status.update(value=current_status + f"\n开始从每个视频提取{frames_count}帧...")
+        
+        extract_cmd = [
+            sys.executable,
+            os.path.join(SCRIPTS_DIR, "extract_frames.py"),
+            input_for_frames,  # 从调整分辨率后的目录或caption目录提取帧
+            "--output-dir", frames_dir,
+            "--num-frames", str(frames_count),
+            "--mode", "uniform"
+        ]
+        
+        logger.info(f"执行帧提取命令: {' '.join(extract_cmd)}")
+        extract_output = run_command(extract_cmd, status)
+        
+        # 检查是否成功
+        existing_frame_dirs = [d for d in os.listdir(frames_dir) if os.path.isdir(os.path.join(frames_dir, d))]
+        if existing_frame_dirs:
+            logger.info(f"帧提取完成，生成了{len(existing_frame_dirs)}个视频帧目录")
+            if hasattr(status, 'update'):
+                current_status = status.value if hasattr(status, 'value') else ""
+                status.update(value=current_status + f"\n帧提取完成，生成了{len(existing_frame_dirs)}个视频帧目录")
+        else:
+            logger.error("帧提取失败，未生成帧目录")
+            if hasattr(status, 'update'):
+                current_status = status.value if hasattr(status, 'value') else ""
+                status.update(value=current_status + "\n错误: 帧提取失败，将使用调整后的视频继续标注")
+    else:
+        logger.warning("没有找到视频文件，跳过帧提取步骤")
+    
+    # 使用调整分辨率后的目录做为标注的输入目录
+    caption_input_dir = resized_dir if resized_videos else caption_dir
+    logger.info(f"将使用{caption_input_dir}目录中的视频文件进行标注")
     
     # 检查是否已经有标注文件
     # 在数据集目录下创建caption目录
