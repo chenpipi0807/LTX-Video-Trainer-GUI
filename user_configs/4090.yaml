@@ -15,7 +15,7 @@ lora:
   - to_out.0
 optimization:
   learning_rate: 0.0002
-  steps: 50
+  steps: 3000
   batch_size: 1
   gradient_accumulation_steps: 1
   max_grad_norm: 1
@@ -46,7 +46,7 @@ validation:
   - 704
   - 97
   seed: 42
-  inference_steps: 50
+  inference_steps: 300
   interval: null
   videos_per_prompt: 1
   guidance_scale: 3.5
