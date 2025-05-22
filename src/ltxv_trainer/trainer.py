@@ -971,8 +971,8 @@ class LtxvTrainer:
     def _save_checkpoint(self) -> Path:
         """Save the model weights."""
 
-        # Create checkpoints directory if it doesn't exist
-        save_dir = Path(self._config.output_dir) / "checkpoints"
+        # Create checkpoints directory if it doesn't exist (renamed to avoid Jupyter conflict)
+        save_dir = Path(self._config.output_dir) / "ckpt"
         save_dir.mkdir(exist_ok=True, parents=True)
 
         # Create filename with step number
