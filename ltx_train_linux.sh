@@ -56,6 +56,7 @@ fi
 
 # 预设分辨率列表
 declare -a RESOLUTIONS_DIMS=(
+    "[SHU] 512x1024"
     "[FANG] 320x320"
     "[FANG] 384x384"
     "[FANG] 416x416"
@@ -89,6 +90,11 @@ declare -a FRAME_COUNTS=(
     "169"
     "193"
     "241"
+    "265"
+    "289"
+    "313"
+    "337"
+    "361"
 )
 
 # 读取配置文件
@@ -240,6 +246,17 @@ function check_dataset_location() {
     
     # 都不存在
     echo ""
+}
+
+# 创建并检查训练子目录
+function ensure_train_subdir() {
+    local dataset_path="$1"
+    
+    # 创建train子目录
+    local train_dir="$dataset_path/train"
+    mkdir -p "$train_dir"
+    
+    echo "$train_dir"
 }
 
 # 获取预处理数据的绝对路径
@@ -569,6 +586,27 @@ function run_pipeline() {
                 
                 if [ ${#resized_videos[@]} -gt 0 ]; then
                     echo -e "${GREEN}分辨率调整完成，生成了${#resized_videos[@]}个调整后的视频${NC}"
+                    
+                    # 确保train目录已创建
+                    train_dir="$(ensure_train_subdir "$dataset_path")"
+                    train_resized_dir="$train_dir/resized_videos"
+                    mkdir -p "$train_resized_dir"
+                    
+                    # 复制resize后的视频到train/resized_videos目录
+                    echo -e "复制调整分辨率后的视频到train目录..."
+                    copied_count=0
+                    for video_file in "${resized_videos[@]}"; do
+                        video_filename=$(basename "$video_file")
+                        train_video_path="$train_resized_dir/$video_filename"
+                        
+                        if [ ! -f "$train_video_path" ] || [ "$video_file" -nt "$train_video_path" ]; then
+                            cp "$video_file" "$train_video_path"
+                            ((copied_count++))
+                        fi
+                    done
+                    if [ $copied_count -gt 0 ]; then
+                        echo -e "${GREEN}已复制$copied_count个调整分辨率后的视频到train目录${NC}"
+                    fi
                 else
                     echo -e "${RED}分辨率调整失败，未生成视频文件${NC}"
                     echo -e "${YELLOW}将使用原始视频继续${NC}"
@@ -614,6 +652,25 @@ function run_pipeline() {
                 
                 if [ ${#existing_frame_dirs[@]} -gt 0 ]; then
                     echo -e "${GREEN}帧提取完成，生成了${#existing_frame_dirs[@]}个视频帧目录${NC}"
+                    
+                    # 确保train目录已创建
+                    train_dir="$(ensure_train_subdir "$dataset_path")"
+                    train_frames_dir="$train_dir/frames"
+                    mkdir -p "$train_frames_dir"
+                    
+                    # 复制提取的帧到train/frames目录
+                    echo -e "复制提取的帧到train目录..."
+                    for frame_dir in "${existing_frame_dirs[@]}"; do
+                        dir_name=$(basename "$frame_dir")
+                        target_dir="$train_frames_dir/$dir_name"
+                        
+                        if [ ! -d "$target_dir" ] || [ "$frame_dir" -nt "$target_dir" ]; then
+                            mkdir -p "$target_dir"
+                            cp -r "$frame_dir/"* "$target_dir/"
+                            echo "复制帧目录到train: $dir_name"
+                        fi
+                    done
+                    echo -e "${GREEN}已复制帧数据到train目录${NC}"
                 else
                     echo -e "${RED}帧提取失败，未生成帧目录${NC}"
                     echo -e "${YELLOW}将使用调整后的视频继续标注${NC}"
@@ -665,6 +722,10 @@ function run_pipeline() {
     # 在数据集目录下创建caption目录
     caption_dir="$dataset_path/caption"
     mkdir -p "$caption_dir"
+    
+    # 确保存在train子目录
+    train_dir="$(ensure_train_subdir "$dataset_path")"
+    echo -e "确保训练数据目录存在: ${CYAN}$train_dir${NC}"
     
     # 标注文件应该在caption目录下
     caption_file="$caption_dir/caption.txt"
@@ -1202,18 +1263,26 @@ except Exception as e:
             echo -e "${YELLOW}警告: 找不到JSON文件: $source_json_path${NC}"
         fi
                 
-        # 复制标注JSON文件到caption目录
+        # 复制标注JSON文件到caption目录和train子目录
         caption_json_path="$caption_dir/captions.json"
+        train_json_path="$train_dir/captions.json"
         if [ -f "$source_json_path" ]; then
             cp "$source_json_path" "$caption_json_path"
             echo -e "复制修改后的标注JSON文件到caption目录: $caption_json_path"
+            
+            cp "$source_json_path" "$train_json_path"
+            echo -e "复制修改后的标注JSON文件到train子目录: $train_json_path"
         fi
         
-        # 第一次将标注文件复制到数据集根目录
+        # 第一次将标注文件复制到数据集根目录和train子目录
         root_caption_path="$dataset_path/caption.txt"
+        train_caption_path="$train_dir/caption.txt"
         if [ -f "$caption_file" ]; then
             cp "$caption_file" "$root_caption_path"
             echo -e "复制标注文件到数据集根目录: $root_caption_path"
+            
+            cp "$caption_file" "$train_caption_path"
+            echo -e "复制标注文件到train子目录: $train_caption_path"
         fi
                 
         # 创建media_path.txt文件，预处理脚本需要这个文件来找到视频文件
@@ -1240,36 +1309,152 @@ except Exception as e:
             fi
         done
         
-        # 确保 dataset_path 目录中有所有视频文件的副本
-        echo -e "确保所有视频文件都在数据集根目录中..."
-        for path in "${unique_video_paths[@]}"; do
-            filename=$(basename "$path")
-            target_path="$dataset_path/$filename"
-            
-            # 如果视频文件不在数据集根目录，复制过去
-            if [ ! -f "$target_path" ] || [ "$path" -nt "$target_path" ]; then
-                cp "$path" "$target_path"
-                echo "复制视频到数据集根目录: $filename"
-            fi
-        done
+        # 检查是否有resize后的视频和已提取的帧
+        resized_videos_dir="$dataset_path/caption_resized"
+        frames_dir="$dataset_path/frames"
         
-        # 收集数据集根目录中所有视频文件
-        root_videos=()
-        while IFS= read -r -d '' file; do
-            root_videos+=("$file")
-        done < <(find "$dataset_path" -maxdepth 1 -type f \( -name "*.mp4" -o -name "*.avi" -o -name "*.mov" -o -name "*.mkv" \) -print0)
+        has_resized_videos=false
+        has_frames=false
+        
+        if [ -d "$resized_videos_dir" ]; then
+            resized_videos=()
+            while IFS= read -r -d '' file; do
+                resized_videos+=("$file")
+            done < <(find "$resized_videos_dir" -type f \( -name "*.mp4" -o -name "*.avi" -o -name "*.mov" -o -name "*.mkv" \) -print0)
+            
+            if [ ${#resized_videos[@]} -gt 0 ]; then
+                has_resized_videos=true
+            fi
+        fi
+        
+        if [ -d "$frames_dir" ]; then
+            frame_dirs=()
+            while IFS= read -r -d '' dir; do
+                frame_dirs+=("$dir")
+            done < <(find "$frames_dir" -mindepth 1 -maxdepth 1 -type d -print0)
+            
+            if [ ${#frame_dirs[@]} -gt 0 ]; then
+                has_frames=true
+            fi
+        fi
+        
+        # 创建train目录的必要子目录
+        train_resized_dir="$train_dir/resized_videos"
+        train_frames_dir="$train_dir/frames"
+        mkdir -p "$train_resized_dir"
+        mkdir -p "$train_frames_dir"
+        
+        # 如果有resize后的视频，优先使用它们
+        if [ "$has_resized_videos" = true ]; then
+            echo -e "发现已调整分辨率的视频，将它们复制到train目录..."
+            copied_count=0
+            for video_file in "${resized_videos[@]}"; do
+                video_filename=$(basename "$video_file")
+                train_video_path="$train_resized_dir/$video_filename"
+                
+                if [ ! -f "$train_video_path" ] || [ "$video_file" -nt "$train_video_path" ]; then
+                    cp "$video_file" "$train_video_path"
+                    ((copied_count++))
+                fi
+            done
+            if [ $copied_count -gt 0 ]; then
+                echo -e "${GREEN}已复制$copied_count个调整分辨率后的视频到train目录${NC}"
+            fi
+        else
+            echo -e "${YELLOW}警告: 未找到调整分辨率后的视频，将使用原始视频${NC}"
+            # 复制原始视频到train目录
+            for path in "${unique_video_paths[@]}"; do
+                filename=$(basename "$path")
+                target_path="$dataset_path/$filename"
+                train_target_path="$train_dir/$filename"
+                
+                # 如果视频文件不在数据集根目录，复制过去
+                if [ ! -f "$target_path" ] || [ "$path" -nt "$target_path" ]; then
+                    cp "$path" "$target_path"
+                    echo "复制视频到数据集根目录: $filename"
+                fi
+                
+                # 同时确保视频文件在train子目录中
+                if [ ! -f "$train_target_path" ] || [ "$path" -nt "$train_target_path" ]; then
+                    cp "$path" "$train_target_path"
+                    echo "复制视频到train子目录: $filename"
+                fi
+            done
+        fi
+        
+        # 如果有已提取的帧，复制它们到train目录
+        if [ "$has_frames" = true ]; then
+            echo -e "发现已提取的帧，将它们复制到train目录..."
+            copied_count=0
+            for frame_dir in "${frame_dirs[@]}"; do
+                dir_name=$(basename "$frame_dir")
+                target_dir="$train_frames_dir/$dir_name"
+                
+                if [ ! -d "$target_dir" ] || [ "$frame_dir" -nt "$target_dir" ]; then
+                    mkdir -p "$target_dir"
+                    cp -r "$frame_dir/"* "$target_dir/"
+                    ((copied_count++))
+                fi
+            done
+            if [ $copied_count -gt 0 ]; then
+                echo -e "${GREEN}已复制$copied_count个帧目录到train目录${NC}"
+            fi
+        else
+            echo -e "${YELLOW}警告: 未找到已提取的帧${NC}"
+        fi
+        
+        # 确定使用哪个目录中的视频文件
+        source_video_dir=""
+        if [ -d "$train_resized_dir" ]; then
+            train_resized_videos=()
+            while IFS= read -r -d '' file; do
+                train_resized_videos+=("$file")
+            done < <(find "$train_resized_dir" -type f \( -name "*.mp4" -o -name "*.avi" -o -name "*.mov" -o -name "*.mkv" \) -print0)
+            
+            if [ ${#train_resized_videos[@]} -gt 0 ]; then
+                source_video_dir="$train_resized_dir"
+                echo -e "使用train目录中的调整分辨率后视频文件"
+            fi
+        fi
+        
+        # 如果resize目录中没有视频，检查根目录
+        if [ -z "$source_video_dir" ]; then
+            train_root_videos=()
+            while IFS= read -r -d '' file; do
+                train_root_videos+=("$file")
+            done < <(find "$train_dir" -maxdepth 1 -type f \( -name "*.mp4" -o -name "*.avi" -o -name "*.mov" -o -name "*.mkv" \) -print0)
+            
+            if [ ${#train_root_videos[@]} -gt 0 ]; then
+                source_video_dir="$train_dir"
+                echo -e "使用train根目录中的视频文件"
+            fi
+        fi
+        
+        # 收集选定目录中的视频文件
+        train_videos=()
+        if [ -n "$source_video_dir" ]; then
+            while IFS= read -r -d '' file; do
+                train_videos+=("$file")
+            done < <(find "$source_video_dir" -type f \( -name "*.mp4" -o -name "*.avi" -o -name "*.mov" -o -name "*.mkv" \) -print0)
+            echo -e "在${source_video_dir}中找到${#train_videos[@]}个视频文件"
+        else
+            echo -e "${RED}错误: 未在train目录或其子目录中找到视频文件${NC}"
+        fi
         
         # 创建media_path.txt文件，确保使用完整路径
         media_path_txt="$dataset_path/media_path.txt"
+        train_media_path_txt="$train_dir/media_path.txt"
         > "$media_path_txt"  # 清空文件
+        > "$train_media_path_txt"  # 清空文件
         
-        if [ ${#root_videos[@]} -gt 0 ]; then
-            for video_path in "${root_videos[@]}"; do
+        if [ ${#train_videos[@]} -gt 0 ]; then
+            for video_path in "${train_videos[@]}"; do
                 echo "$video_path" >> "$media_path_txt"
+                echo "$video_path" >> "$train_media_path_txt"
             done
-            echo -e "已创建media_path.txt文件，包含${#root_videos[@]}个完整视频文件路径"
+            echo -e "已创建media_path.txt文件，包含${#train_videos[@]}个完整视频文件路径"
         else
-            echo -e "${RED}警告: 未找到视频文件在数据集根目录，media_path.txt可能为空${NC}"
+            echo -e "${RED}警告: 未找到视频文件在train子目录，media_path.txt可能为空${NC}"
         fi
         
         # 使用预处理脚本
@@ -1310,10 +1495,24 @@ except Exception as e:
             echo -e "使用CPU进行预处理"
         fi
         
+        # 检查是否有帧目录
+        has_train_frames=false
+        if [ -d "$train_frames_dir" ]; then
+            train_frame_dirs=()
+            while IFS= read -r -d '' dir; do
+                train_frame_dirs+=("$dir")
+            done < <(find "$train_frames_dir" -mindepth 1 -maxdepth 1 -type d -print0)
+            
+            if [ ${#train_frame_dirs[@]} -gt 0 ]; then
+                has_train_frames=true
+                echo -e "在train/frames中找到${#train_frame_dirs[@]}个帧目录"
+            fi
+        fi
+        
         # 构建预处理命令
         preprocess_cmd=(
             python "$preprocess_script"
-            "$dataset_path"  # 输入数据集目录
+            "$train_dir"  # 输入训练数据目录
             "--resolution-buckets" "$resolution_bucket"
             "--output-dir" "$precomputed_path"
             "--batch-size" "1"  # 小批量大小防止内存问题
@@ -1321,6 +1520,15 @@ except Exception as e:
             "--device" "$device"  # 动态使用可用的最佳设备
             "--frames" "$frames"  # 显式传递帧数参数
         )
+        
+        # 如果有帧目录，添加相关参数
+        if [ "$has_train_frames" = true ]; then
+            preprocess_cmd+=("--use-extracted-frames")
+            preprocess_cmd+=("--frames-dir" "$train_frames_dir")
+            echo -e "${GREEN}将使用已提取的帧进行预处理${NC}"
+        else
+            echo -e "${YELLOW}警告: 未找到帧目录，预处理将自行提取帧${NC}"
+        fi
         
         # 执行预处理命令
         echo -e "执行预处理命令: ${preprocess_cmd[*]}"
