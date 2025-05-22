@@ -1,0 +1,64 @@
+# LTXV LoRA超高质量配置 (H20 90GB专用版)
+
+model:
+  model_source: LTXV_13B_097_DEV
+  training_mode: lora
+  load_checkpoint: null
+lora:
+  rank: 128           # 提高至128以增加LoRA适应能力
+  alpha: 128          # 与rank保持一致
+  dropout: 0.05       # 添加少量dropout防止过拟合
+  target_modules:
+  - to_k
+  - to_q
+  - to_v
+  - to_out.0
+  - ff.net.0.proj    # 额外添加前馈网络以提高表现力
+  - ff.net.2         # 额外添加前馈网络以提高表现力
+optimization:
+  learning_rate: 0.0002   # 稍微降低学习率以提高稳定性
+  steps: 10000            # 增加步数以获得更好的收敛效果
+  batch_size: 4           # 90GB显存可以支持更大的批量
+  gradient_accumulation_steps: 2  # 累积梯度进一步增加有效批量
+  max_grad_norm: 1.0
+  optimizer_type: adamw8bit
+  scheduler_type: cosine  # 使用余弦调度器效果更好
+  scheduler_params:
+    num_warmup_steps: 500  # 添加预热步骤
+  enable_gradient_checkpointing: false  # 90GB显存足够，可以关闭节省显存的技术
+  first_frame_conditioning_p: 0.5
+acceleration:
+  mixed_precision_mode: bf16
+  quantization: null       # 90GB显存无需量化
+  load_text_encoder_in_8bit: false  # 无需8bit加载，使用全精度获得更好效果
+  compile_with_inductor: true   # 开启编译加速
+  compilation_mode: default     # 使用默认编译模式以平衡速度和内存
+data:
+  preprocessed_data_root: ${DATASET_PATH}/.precomputed
+  num_dataloader_workers: 8     # 增加工作线程数量
+validation:
+  prompts:
+  - ${TRIGGER_WORD} a female character with blonde hair and a blue and white outfit holding a sword
+  - ${TRIGGER_WORD} a female character with blonde hair in a fighting stance with a serious expression
+  - ${TRIGGER_WORD} a female character wearing a white and blue outfit with gold accents in a room
+  - ${TRIGGER_WORD} close-up portrait of a female character with detailed facial features and expressive eyes
+  - ${TRIGGER_WORD} full body shot of a female character in dynamic action pose
+  negative_prompt: worst quality, inconsistent motion, blurry, jittery, distorted, ugly, deformed, pixelated
+  video_dims:
+  - 768      # 使用更高分辨率
+  - 1024     # 更宽的画面
+  - 241      # 保持高帧数
+  seed: 42
+  inference_steps: 100    # 增加推理步骤以提高质量
+  interval: null          
+  videos_per_prompt: 1
+  guidance_scale: 5.0     # 提高引导系数以增强特征
+checkpoints:
+  interval: 500           # 更频繁地保存检查点
+  keep_last_n: -1         # 保存所有检查点
+flow_matching:
+  timestep_sampling_mode: shifted_logit_normal
+  timestep_sampling_params:
+    max_shift: 0.1        # 添加参数以优化流匹配
+seed: 42
+output_dir: outputs/NEW_lora_r128_H20  # 更改输出目录名称以区分配置
