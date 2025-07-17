@@ -31,6 +31,11 @@ MODELS = {
         "local_dir": "models/LTX-Video-0.9.7-diffusers",
         "required": True
     },
+    "LTX-Video-0.9.8-13B-distilled": {
+        "repo_id": "linoyts/LTX-Video-0.9.8-13B-distilled",
+        "local_dir": "models/LTX-Video-0.9.8-13B-distilled",
+        "required": True
+    },
     "LLaVA-NeXT-Video-7B-hf": {
         "repo_id": "llava-hf/LLaVA-NeXT-Video-7B-hf",
         "local_dir": None,  # 将使用系统默认路径
