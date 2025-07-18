@@ -45,6 +45,14 @@ DATA_DIR="$PROJECT_DIR/train_date"
 CONFIGS_DIR="$PROJECT_DIR/configs"
 DIFFUSERS_MODEL_PATH="$PROJECT_DIR/models/LTX-Video-0.9.7-diffusers"
 
+# 可用的模型选项
+declare -A AVAILABLE_MODELS
+AVAILABLE_MODELS["LTX-Video-0.9.7-diffusers (原版)"]="$PROJECT_DIR/models/LTX-Video-0.9.7-diffusers"
+AVAILABLE_MODELS["LTX-Video-0.9.8-13B-distilled (新版蒸馏模型)"]="$PROJECT_DIR/models/LTX-Video-0.9.8-13B-distilled"
+
+# 模型名称数组（用于遍历）
+MODEL_NAMES=("LTX-Video-0.9.7-diffusers (原版)" "LTX-Video-0.9.8-13B-distilled (新版蒸馏模型)")
+
 # 检查LLaVA模型是否已下载且完整
 if [ ! -d "$LLAVA_MODEL_PATH" ] || [ ! -f "$LLAVA_MODEL_PATH/config.json" ] || [ ! -f "$LLAVA_MODEL_PATH/tokenizer.json" ]; then
     echo -e "${YELLOW}警告: LLaVA-NeXT-Video-7B-hf模型未下载或不完整。${NC}"
@@ -317,6 +325,28 @@ function get_preprocessed_path() {
     echo "$default_path"
 }
 
+# 查找LTX模型路径
+function find_ltx_model() {
+    local model_choice="$1"
+    
+    # 如果传入的是完整路径，直接返回
+    if [ -d "$model_choice" ]; then
+        echo "$model_choice"
+        return
+    fi
+    
+    # 根据模型名称查找对应路径
+    for model_name in "${MODEL_NAMES[@]}"; do
+        if [ "$model_name" = "$model_choice" ]; then
+            echo "${AVAILABLE_MODELS[$model_name]}"
+            return
+        fi
+    done
+    
+    # 如果没有找到匹配的模型，返回默认路径
+    echo "${AVAILABLE_MODELS["LTX-Video-0.9.7-diffusers (原版)"]}"
+}
+
 # 显示标题
 function show_title() {
     clear
@@ -341,6 +371,7 @@ function run_pipeline() {
     local only_preprocess="$9"
     local add_trigger="${10}"
     local caption_method="${11}"
+    local model_choice="${12}"
     
     # 提取实际分辨率，去除标识前缀
     dimensions=$(extract_dims "$dims")
@@ -373,11 +404,23 @@ function run_pipeline() {
     # 只有在需要训练时才检查模型文件
     model_path=""
     if [ "$only_preprocess" = false ] && [ -n "$config_name" ]; then
-        if [ -d "$DIFFUSERS_MODEL_PATH" ]; then
-            echo -e "使用diffusers格式模型: ${CYAN}$DIFFUSERS_MODEL_PATH${NC}"
-            model_path="$DIFFUSERS_MODEL_PATH"
+        # 使用模型选择功能查找模型路径
+        if [ -n "$model_choice" ]; then
+            model_path=$(find_ltx_model "$model_choice")
+            echo -e "使用选定的模型: ${CYAN}$model_choice${NC}"
+            echo -e "模型路径: ${CYAN}$model_path${NC}"
         else
-            echo -e "${RED}错误: 未找到diffusers模型: $DIFFUSERS_MODEL_PATH${NC}"
+            # 默认使用原版模型
+            model_path="$DIFFUSERS_MODEL_PATH"
+            echo -e "使用默认diffusers格式模型: ${CYAN}$model_path${NC}"
+        fi
+        
+        # 检查模型路径是否存在
+        if [ -d "$model_path" ]; then
+            echo -e "${GREEN}模型路径有效: $model_path${NC}"
+        else
+            echo -e "${RED}错误: 未找到模型: $model_path${NC}"
+            echo -e "${YELLOW}请确认模型文件已下载到正确位置${NC}"
             return 1
         fi
     elif [ "$only_preprocess" = true ]; then
@@ -1611,6 +1654,11 @@ try:
         config_data['data'] = {}
     config_data['data']['preprocessed_data_root'] = '$precomputed_path'
     
+    # 更新模型路径
+    if 'model' not in config_data:
+        config_data['model'] = {}
+    config_data['model']['model_source'] = '$model_path'
+    
     # 更新lora rank
     if 'lora' not in config_data:
         config_data['lora'] = {}
@@ -1817,6 +1865,7 @@ function main() {
     # 9. 选择配置模板（如果要训练）
     config_name=""
     rank=64  # 默认LoRA rank
+    model_choice=""  # 默认模型选择
     
     if [ "$only_preprocess" = false ]; then
         echo -e "\n${BLUE}步骤9: 选择配置模板${NC}"
@@ -1846,6 +1895,25 @@ function main() {
         fi
         
         echo -e "使用LoRA秩: ${CYAN}$rank${NC}"
+        
+        # 10.1. 选择预训练模型
+        echo -e "\n${BLUE}步骤10.1: 选择预训练模型${NC}"
+        echo -e "可用的预训练模型:"
+        for i in "${!MODEL_NAMES[@]}"; do
+            echo -e "  $i) ${MODEL_NAMES[$i]}"
+        done
+        
+        echo -e "请选择预训练模型 (输入编号, 默认使用原版模型):"
+        read -r model_index
+        
+        model_choice=""
+        if [[ "$model_index" =~ ^[0-9]+$ ]] && [ "$model_index" -ge 0 ] && [ "$model_index" -lt ${#MODEL_NAMES[@]} ]; then
+            model_choice="${MODEL_NAMES[$model_index]}"
+            echo -e "选择的模型: ${CYAN}$model_choice${NC}"
+        else
+            model_choice="${MODEL_NAMES[0]}"
+            echo -e "使用默认模型: ${CYAN}$model_choice${NC}"
+        fi
     fi
     
     # 11. 添加触发词
@@ -1874,6 +1942,7 @@ function main() {
     if [ "$only_preprocess" = false ]; then
         echo -e "配置模板: ${CYAN}$config_name${NC}"
         echo -e "LoRA秩: ${CYAN}$rank${NC}"
+        echo -e "预训练模型: ${CYAN}$model_choice${NC}"
     fi
     
     echo -e "添加触发词: $([ "$add_trigger" = true ] && echo "${GREEN}是${NC} (${CYAN}$(extract_trigger_word "$basename")${NC})" || echo "${YELLOW}否${NC}")"
@@ -1890,7 +1959,7 @@ function main() {
     # 执行训练流程
     echo -e "\n${BLUE}开始执行训练流程...${NC}"
     
-    run_pipeline "$basename" "$dims" "$frames" "$config_name" "$rank" "$split_scenes" "$caption" "$preprocess" "$only_preprocess" "$add_trigger" "$caption_method"
+    run_pipeline "$basename" "$dims" "$frames" "$config_name" "$rank" "$split_scenes" "$caption" "$preprocess" "$only_preprocess" "$add_trigger" "$caption_method" "$model_choice"
     
     exit_code=$?
     if [ $exit_code -eq 0 ]; then
