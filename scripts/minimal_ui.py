@@ -1456,7 +1456,6 @@ def run_pipeline(basename, dims, frames, config_name, rank, split_scenes=True, c
         # 如果caption.txt不存在或为空，但有JSON文件，则转换为TXT格式
         if (not os.path.exists(caption_file) or os.path.getsize(caption_file) == 0) and valid_json_file:
             try:
-                import json
                 logger.info(f"将JSON标注文件转换为TXT格式: {valid_json_file} -> {caption_file}")
                 
                 # 读取JSON文件
