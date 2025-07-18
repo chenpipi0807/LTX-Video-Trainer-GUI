@@ -42,8 +42,22 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIGS_DIR = os.path.join(PROJECT_DIR, "configs")
 SCRIPTS_DIR = os.path.join(PROJECT_DIR, "scripts")
 
-# LTX模型路径 - 只使用diffusers格式的本地模型
-DIFFUSERS_MODEL_PATH = os.path.join(PROJECT_DIR, "models", "LTX-Video-0.9.7-diffusers")
+# LTX模型路径 - 支持多个模型选择
+AVAILABLE_MODELS = {
+    "LTX-Video-0.9.7-diffusers": {
+        "path": os.path.join(PROJECT_DIR, "models", "LTX-Video-0.9.7-diffusers"),
+        "name": "LTX-Video-0.9.7-diffusers",
+        "description": "原版0.9.7模型"
+    },
+    "LTX-Video-0.9.8-13B-distilled": {
+        "path": os.path.join(PROJECT_DIR, "models", "LTX-Video-0.9.8-13B-distilled"),
+        "name": "LTX-Video-0.9.8-13B-distilled",
+        "description": "新版0.9.8-13B蒸馏模型"
+    }
+}
+
+# 默认模型路径（向后兼容）
+DIFFUSERS_MODEL_PATH = AVAILABLE_MODELS["LTX-Video-0.9.7-diffusers"]["path"]
 
 # 设置环境变量以强制离线模式
 os.environ["PYTHONIOENCODING"] = "utf8"
@@ -418,21 +432,32 @@ def run_training(config_name, status):
     
     return run_command(cmd, status)
 
-def find_ltx_model(model_name_pattern="ltxv-13b"):
+def find_ltx_model(model_name=None):
     """查找LTX模型文件
     
     Args:
-        model_name_pattern: 模型名称模式，如ltxv-13b
+        model_name: 模型名称，如"LTX-Video-0.9.7-diffusers"或"LTX-Video-0.9.8-13B-distilled"
         
     Returns:
         找到的模型路径或None
     """
-    # 直接返回diffusers目录作为模型路径，不再查找具体的safetensors文件
-    if os.path.exists(DIFFUSERS_MODEL_PATH):
-        logger.info(f"使用diffusers格式模型: {DIFFUSERS_MODEL_PATH}")
-        return DIFFUSERS_MODEL_PATH
+    # 如果指定了模型名称，查找对应的模型
+    if model_name and model_name in AVAILABLE_MODELS:
+        model_path = AVAILABLE_MODELS[model_name]["path"]
+        if os.path.exists(model_path):
+            logger.info(f"使用diffusers格式模型: {model_path}")
+            return model_path
+        else:
+            logger.warning(f"未找到指定模型: {model_path}")
     
-    logger.warning(f"未找到diffusers模型: {DIFFUSERS_MODEL_PATH}")
+    # 如果没有指定模型或指定的模型不存在，按优先级查找
+    for model_key, model_info in AVAILABLE_MODELS.items():
+        model_path = model_info["path"]
+        if os.path.exists(model_path):
+            logger.info(f"使用diffusers格式模型: {model_path}")
+            return model_path
+    
+    logger.warning("未找到任何可用的diffusers模型")
     return None
 
 def get_preprocessed_path(basename):
@@ -577,7 +602,7 @@ def extract_dims(dims_string):
     
     return dims_string
 
-def run_pipeline(basename, dims, frames, config_name, rank, split_scenes=True, caption=True, preprocess=True, status=None, only_preprocess=False, add_trigger=True, caption_method="Moonshot API (推荐，需要API密钥)"):
+def run_pipeline(basename, dims, frames, config_name, rank, split_scenes=True, caption=True, preprocess=True, status=None, only_preprocess=False, add_trigger=True, caption_method="Moonshot API (推荐，需要API密钥)", model_choice="LTX-Video-0.9.7-diffusers"):
     # 全局定义分场景参数，避免变量作用域问题
     min_scene_length = "3s"   # 使用3秒作为最短场景长度
     detector_type = "content" # 内容检测器
@@ -596,6 +621,8 @@ def run_pipeline(basename, dims, frames, config_name, rank, split_scenes=True, c
         status: 状态UI组件
         only_preprocess: 是否只执行预处理步骤，不进行训练
         add_trigger: 是否添加触发词到标注文件
+        caption_method: 标注方法
+        model_choice: 选择的预训练模型
     """
     # 初始化重要变量，防止未定义错误
     precomputed_path = None
@@ -2234,6 +2261,19 @@ sys.exit(return_code)
             summary = "\n配置信息摘要:"
             
             # 更新配置参数
+            # 0. 设置模型路径（基于用户选择的模型）
+            selected_model_path = find_ltx_model(model_choice)
+            if selected_model_path and yaml_data and 'model' in yaml_data:
+                # 使用绝对路径格式，确保训练器能找到模型
+                abs_model_path = os.path.abspath(selected_model_path)
+                logger.info(f"设置模型路径为: {abs_model_path} (选择的模型: {model_choice})")
+                yaml_data['model']['model_source'] = abs_model_path
+                summary += f"\n模型路径: {abs_model_path} ({model_choice})"
+            elif selected_model_path:
+                logger.warning(f"配置文件中没有找到model字段，无法设置模型路径")
+            else:
+                logger.warning(f"未找到选定的模型: {model_choice}")
+            
             # 1. 替换预处理数据路径（如果存在）
         if precomputed_path and yaml_data and 'data' in yaml_data and 'preprocessed_data_root' in yaml_data['data']:
             # 使用绝对路径格式，确保训练器能找到数据
@@ -2730,9 +2770,6 @@ def create_ui():
     """创建用户界面"""
     # 使用暗色主题
     with gr.Blocks(theme=gr.themes.Soft(primary_hue="slate", neutral_hue="slate", text_size="sm")) as app:
-        # 只显示13B模型状态
-        ltx_13b_model = find_ltx_model("ltxv-13b")
-        
         gr.Markdown("# 🎬 LTX-Video训练器")
         gr.Markdown("### 专业视频模型训练界面")
         
@@ -2744,14 +2781,17 @@ def create_ui():
         else:
             gr.Markdown("**⚠️ 未检测到GPU。训练需要NVIDIA GPU支持。**")
             
-        # 预训练模型信息 - 只显示13B模型
-        if os.path.exists(DIFFUSERS_MODEL_PATH):
-            model_status = f"✅ 使用LTXV-13B-0.9.7 Diffusers格式模型: {DIFFUSERS_MODEL_PATH}"
-        else:
-            model_status = f"❌ 未找到LTXV-13B-0.9.7 Diffusers模型: {DIFFUSERS_MODEL_PATH}"
-            
+        # 预训练模型信息
         gr.Markdown("预训练模型状态:")
-        gr.Markdown(model_status)
+        model_status_lines = []
+        for model_key, model_info in AVAILABLE_MODELS.items():
+            if os.path.exists(model_info["path"]):
+                status = f"✅ {model_info['description']}: {model_info['path']}"
+            else:
+                status = f"❌ {model_info['description']}: {model_info['path']}"
+            model_status_lines.append(status)
+        
+        gr.Markdown("\n".join(model_status_lines))
         
         with gr.Tabs():
             # 将一键训练流水线放在第一位
@@ -2763,6 +2803,14 @@ def create_ui():
                     with gr.Column():
                         pipeline_basename = gr.Textbox(label="项目名称", placeholder="输入项目名称，如APT，数据集应放在train_date/APT目录中")
                         gr.Markdown("支持的数据集位置：**train_date/{项目名}**(推荐) 或 **{项目名}_raw**")
+                        
+                        # 模型选择
+                        pipeline_model_choice = gr.Dropdown(
+                            label="选择预训练模型", 
+                            choices=[(f"{model_info['description']} ({model_key})", model_key) for model_key, model_info in AVAILABLE_MODELS.items()],
+                            value="LTX-Video-0.9.7-diffusers",
+                            info="选择用于训练的预训练模型"
+                        )
                         
                         with gr.Row():
                             pipeline_dims = gr.Dropdown(label="分辨率尺寸", choices=RESOLUTIONS_DIMS, value="768x768")
@@ -2808,7 +2856,7 @@ def create_ui():
                     return CONFIG_FILES.get(config_name)
                 
                 # 定义一个包装函数，处理默认参数
-                def run_pipeline_with_defaults(basename, dims, frames, config_name, rank, split_scenes, caption, preprocess, status, caption_method):
+                def run_pipeline_with_defaults(basename, dims, frames, config_name, rank, split_scenes, caption, preprocess, status, caption_method, model_choice):
                     # 传递默认参数和标注方法
                     return run_pipeline(
                         basename=basename,
@@ -2822,7 +2870,8 @@ def create_ui():
                         status=status,
                         only_preprocess=False,  # 这里使用固定值
                         add_trigger=True,       # 使用固定值
-                        caption_method=caption_method  # 使用传递进来的参数
+                        caption_method=caption_method,  # 使用传递进来的参数
+                        model_choice=model_choice  # 使用模型选择参数
                     )
                 
                 pipeline_button.click(
@@ -2837,7 +2886,8 @@ def create_ui():
                         pipeline_caption,
                         pipeline_preprocess,
                         pipeline_status,
-                        pipeline_caption_method  # 添加标注方法参数
+                        pipeline_caption_method,  # 添加标注方法参数
+                        pipeline_model_choice  # 添加模型选择参数
                     ],
                     outputs=pipeline_status
                 )
@@ -2894,9 +2944,9 @@ def create_ui():
                         """)
                         
                         # 使用run_pipeline函数但只执行预处理步骤
-                        def run_preprocess_only(basename, dims, frames, split_scenes, caption, add_trigger, caption_method, status):
+                        def run_preprocess_only(basename, dims, frames, split_scenes, caption, add_trigger, caption_method, status, model_choice="LTX-Video-0.9.7-diffusers"):
                             # 调用run_pipeline函数但不执行训练步骤
-                            # 注意这里传空的config_name和0的rank，表示不进行训练
+                            # 注意这里传空的config_name呈0的rank，表示不进行训练
                             result = run_pipeline(
                                 basename=basename, 
                                 dims=dims, 
@@ -2909,7 +2959,8 @@ def create_ui():
                                 status=status,
                                 only_preprocess=True,  # 标记只执行预处理
                                 add_trigger=add_trigger,  # 是否添加触发词
-                                caption_method=caption_method  # 标注方法
+                                caption_method=caption_method,  # 标注方法
+                                model_choice=model_choice  # 模型选择
                             )
                             return result
                         
