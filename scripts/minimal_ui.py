@@ -186,6 +186,14 @@ def run_command(cmd, status=None, verbose=True):
     cmd_env = os.environ.copy()
     cmd_env["PYTHONIOENCODING"] = "utf-8"
     
+    # 设置PYTHONPATH以包含src目录，修复ltxv_trainer模块导入问题
+    src_path = os.path.join(PROJECT_DIR, "src")
+    if "PYTHONPATH" in cmd_env:
+        cmd_env["PYTHONPATH"] = f"{src_path};{cmd_env['PYTHONPATH']}"
+    else:
+        cmd_env["PYTHONPATH"] = src_path
+    logger.info(f"设置PYTHONPATH包含src目录: {src_path}")
+    
     # 打印命令
     cmd_str = ' '.join(cmd)
     logger.info(f"执行命令: {cmd_str}")
@@ -1102,7 +1110,6 @@ def run_pipeline(basename, dims, frames, config_name, rank, split_scenes=True, c
             
         # 尝试转换JSON到TXT
         try:
-            import json
             # 读取JSON文件
             with open(caption_json, 'r', encoding='utf-8') as f:
                 captions_data = json.load(f)
