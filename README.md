@@ -30,6 +30,12 @@ LTX-Video-Trainer 是一款专业的LTX视频LoRA模型训练GUI工具，支持�
 - 训练完成必须转换comfyui格式，不然不能用！
 
 ## 更新日志
+- 07-18
+- 增加了0.9.8蒸馏模型不确定能不能用我还没时间测试
+
+<img width="2346" height="1684" alt="image" src="https://github.com/user-attachments/assets/ca9ec06d-d905-4653-8e65-ca3d63a59fce" />
+
+
 
 - 05-18
 - 优化了API推理返回错误的问题;
